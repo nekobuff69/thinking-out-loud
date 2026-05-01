@@ -1,5 +1,3 @@
-Status: needs-triage
-
 # Thinking Out Loud
 
 ## Problem Statement
