@@ -1,0 +1,7 @@
+The user asks: "How does a LLM go to sleep?" They want a creative answer possibly. The system says we are a critical thinker. Likely they want an explanation of how a language model (like GPT) might be "put to sleep" — maybe in terms of power down, inference mode, etc. We can answer with an explanation: LLM not have sleep cycles, but can be idle, caching, shutting down processes, using low-power mode, etc. Provide explanation in accessible way. Probably it's a playful question. Provide answer with technical details, maybe talk about inference, caching, token generation, etc.
+
+We must follow policy: no disallowed content. It's fine.
+
+We should respond in a helpful way, possibly with some humor, but also technical details. Provide explanation: LLM doesn't have consciousness; "sleep" is a metaphor; can be turned off, placed in standby, memory cleared, etc.
+
+Answer accordingly.

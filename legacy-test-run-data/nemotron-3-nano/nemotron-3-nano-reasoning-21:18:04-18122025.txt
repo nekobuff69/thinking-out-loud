@@ -1,0 +1,1 @@
+User asks: "How does a LLM go to sleep?" Likely they want a creative answer about large language models being "asleep" maybe in inference? They might be looking for metaphorical answer. Should answer creatively. There's no disallowed content. Provide explanation.

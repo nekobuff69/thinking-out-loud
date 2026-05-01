@@ -1,0 +1,1 @@
+The user asks: "How does a LLM go to sleep?" They want a creative answer about large language model sleeping. Should respond in line with policies. It's not disallowed. Provide explanation: maybe about shutting down, power off, context, etc. Could answer metaphorically. Should be helpful. Let's answer.

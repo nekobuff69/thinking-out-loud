@@ -1,0 +1,16 @@
+{
+  "name": "the-thinking-machine",
+  "version": "1.0.0",
+  "description": "Ask questions and parse LLM's reasoning content",
+  "license": "ISC",
+  "author": "nekobuff69",
+  "type": "module",
+  "main": "getCompletion.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "dotenv": "^17.2.3"
+  }
+}
