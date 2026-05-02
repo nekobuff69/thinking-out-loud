@@ -1,11 +1,76 @@
+<!DOCTYPE html>
 <html lang="en">
-	<head>
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>Document</title>
-	</head>
-	<body>
-		<script src="./index.js" type="module"></script>
-		<button type="button" id="trigger-workflow-btn">button</button>
-	</body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Thinking Out Loud</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #000;
+      color: #ccc;
+      font-family: 'Courier New', Courier, monospace;
+      min-height: 100vh;
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    #top-bar {
+      padding: 1rem 2rem;
+      border-bottom: 1px solid #222;
+    }
+
+    #columns {
+      flex: 1;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      padding: 1rem 2rem;
+    }
+
+    .column {
+      border: 1px solid #222;
+      border-radius: 4px;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .column-header {
+      font-size: 1.1rem;
+      font-weight: bold;
+      margin-bottom: 0.5rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid #333;
+    }
+
+    .column-reasoning {
+      flex: 1;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.9rem;
+      line-height: 1.5;
+      min-height: 200px;
+    }
+
+    .column-waveform {
+      height: 60px;
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header id="top-bar"></header>
+    <main id="columns"></main>
+  </div>
+  <script type="module" src="./index.js"></script>
+</body>
 </html>
