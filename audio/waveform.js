@@ -14,11 +14,25 @@ export function createWaveform(canvas, analyser, color) {
   const idleSpeed = 0.03;
   const amplitudeThreshold = 10; // above this = active
 
+  // Sync canvas drawing buffer to its actual rendered size
+  function resize() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  resize();
+
+  const resizeObserver = new ResizeObserver(resize);
+  resizeObserver.observe(canvas);
+
   function draw() {
     animationId = requestAnimationFrame(draw);
 
-    const w = canvas.width;
-    const h = canvas.height;
+    const rect = canvas.getBoundingClientRect();
+    const w = rect.width;
+    const h = rect.height;
 
     // Read analyser data
     analyser.getByteTimeDomainData(dataArray);
@@ -91,6 +105,7 @@ export function createWaveform(canvas, analyser, color) {
         cancelAnimationFrame(animationId);
         animationId = null;
       }
+      resizeObserver.disconnect();
     },
   };
 }

@@ -46,6 +46,7 @@ topBar.appendChild(stopBtn);
 
 // Session state label
 const stateLabel = document.createElement("span");
+stateLabel.className = "state-label";
 stateLabel.style.cssText = "color:#555;font-size:0.8rem;margin-left:1rem;";
 topBar.appendChild(stateLabel);
 
@@ -61,7 +62,7 @@ historyBtn.addEventListener("click", () => {
 // --- Audio + TTS ---
 const audioGraph = new AudioGraph();
 audioGraph.enableTabResume();
-const ttsEngine = new KokoroBackend(config.tts.model);
+const ttsEngine = new KokoroBackend(config.tts.model, audioGraph);
 
 // --- Orchestrator ---
 const orchestrator = new Orchestrator({
@@ -83,9 +84,15 @@ const orchestrator = new Orchestrator({
 
 orchestrator.onStateChange((state) => {
   stateLabel.textContent = state;
-  stateLabel.style.color = state.startsWith("Error") ? "#ff4444" : "#555";
+  if (state.startsWith("Error")) {
+    stateLabel.style.color = "#ff4444";
+  } else if (state.startsWith("Loading") || state === "Checking") {
+    stateLabel.style.color = "#ffaa00";
+  } else {
+    stateLabel.style.color = "#555";
+  }
 
-  if (state === "Loading" || state === "Checking" || state === "Thinking" || state === "Speaking") {
+  if (state === "Loading" || state.startsWith("Loading:") || state === "Checking" || state === "Thinking" || state === "Speaking") {
     promptSelector.setEnabled(false);
     modeToggle.setEnabled(false);
     historyBtn.disabled = true;

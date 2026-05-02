@@ -48,7 +48,8 @@ export class AudioGraph {
     panner.connect(analyser);
     analyser.connect(ctx.destination);
 
-    this.#channels.push({ gain });
+    const activeSources = new Set();
+    this.#channels.push({ gain, activeSources });
 
     /**
      * Play an AudioBuffer through this channel.
@@ -63,8 +64,10 @@ export class AudioGraph {
       source.buffer = buffer;
       source.connect(gain);
       source.start();
+      activeSources.add(source);
 
       source.onended = () => {
+        activeSources.delete(source);
         this.#activeCount = Math.max(0, this.#activeCount - 1);
         this.#updateDucking();
         onEnd?.();
@@ -73,15 +76,35 @@ export class AudioGraph {
       return source;
     };
 
-    return { play, analyser, gain };
+    /** Stop all currently-playing sources on this channel. */
+    const stopAll = () => {
+      for (const source of activeSources) {
+        try { source.stop(); } catch {} // already stopped is fine
+        activeSources.delete(source);
+      }
+    };
+
+    return { play, analyser, gain, stopAll };
   }
 
   get activeCount() {
     return this.#activeCount;
   }
 
+  /** Remove all channels and disconnect their nodes. Stops any playing audio. */
+  clearChannels() {
+    for (const ch of this.#channels) {
+      ch.stopAll?.();
+      try { ch.gain.disconnect(); } catch {} // already disconnected is fine
+    }
+    this.#channels.length = 0;
+    this.#activeCount = 0;
+  }
+
   /** Close the AudioContext and release resources. */
   destroy() {
+    // Tear down channels before closing context
+    this.clearChannels();
     if (this.#ctx) {
       this.#ctx.close();
       this.#ctx = null;

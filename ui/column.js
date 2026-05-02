@@ -69,6 +69,7 @@ export function createColumn(container, model) {
   }
 
   function clear() {
+    col.classList.remove("has-error");
     reasoningText = "";
     reasoningEl.textContent = "";
     scrollIndicator.style.display = "none";
@@ -77,7 +78,12 @@ export function createColumn(container, model) {
   }
 
   function setError(message) {
-    reasoningEl.innerHTML = `<span class="error-msg">${message}</span>`;
+    col.classList.add("has-error");
+    const span = document.createElement("span");
+    span.className = "error-msg";
+    span.textContent = message;
+    reasoningEl.textContent = "";
+    reasoningEl.appendChild(span);
     reasoningEl.style.color = "";
   }
 

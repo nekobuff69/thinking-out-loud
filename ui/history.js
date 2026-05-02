@@ -24,6 +24,9 @@ export function createHistory(container, store, onReplay) {
   clearBtn.className = "history-clear";
   clearBtn.textContent = "Clear";
   clearBtn.addEventListener("click", () => {
+    if (store.list().length > 0 && !confirm("Clear all session history? This cannot be undone.")) {
+      return;
+    }
     store.clear();
     renderList();
   });

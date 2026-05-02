@@ -78,10 +78,38 @@ export class SentenceBuffer {
     return this.#capped;
   }
 
+  // Common English abbreviations that end with '.' but aren't sentence boundaries
+  static #ABBREVIATIONS = new Set([
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st",
+    "etc", "vs", "ie", "eg",
+    "inc", "ltd", "co", "corp",
+    "approx", "apt", "dept", "est",
+    "govt", "assn", "bldg", "div",
+  ]);
+
   #findSentenceBoundary(text) {
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
-      if (ch === "." || ch === "!" || ch === "?" || ch === ";" || ch === "\n") {
+      if (ch === "!" || ch === "?" || ch === ";" || ch === "\n") {
+        return i;
+      }
+      // For '.', check if it's an abbreviation rather than a sentence end
+      if (ch === ".") {
+        // Skip if followed by a digit (decimal number like 3.14)
+        if (i + 1 < text.length && /\d/.test(text[i + 1])) continue;
+        // Skip if preceded by a single letter (initials like "A. ")
+        if (i >= 1 && text[i - 1].length === 1 && /[a-zA-Z]/.test(text[i - 1])) {
+          // But only if it looks like an initial (single uppercase letter + dot)
+          if (i === 1 || /\s/.test(text[i - 2])) continue;
+        }
+        // Check for multi-letter abbreviations (e.g., "Dr.", "etc.")
+        let wordStart = i - 1;
+        while (wordStart >= 0 && /[a-zA-Z]/.test(text[wordStart])) {
+          wordStart--;
+        }
+        const word = text.slice(wordStart + 1, i).toLowerCase();
+        if (SentenceBuffer.#ABBREVIATIONS.has(word)) continue;
+        // It's a real sentence boundary
         return i;
       }
     }

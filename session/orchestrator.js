@@ -54,8 +54,10 @@ export class Orchestrator {
     this.#monologueIndex = 0;
     this.#allStreamsDone = false;
     this.#abortControllers.clear();
+    this.#audioGraph.clearChannels();
     this.#setState("Loading");
 
+    this.#setState("Loading: downloading TTS model…");
     await this.#ttsEngine.load();
     this.#activeSessions.clear();
     this.#sessionData = {
@@ -120,13 +122,16 @@ export class Orchestrator {
     this.#questionText = sessionData.question;
     this.#monologueIndex = 0;
     this.#allStreamsDone = false;
+    this.#audioGraph.clearChannels();
     this.#setState("Loading");
 
+    this.#setState("Loading: downloading TTS model…");
     await this.#ttsEngine.load();
     this.#activeSessions.clear();
     this.#sessionData = { ...sessionData, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
 
-    this.#setupPipelines();
+    // Use stored model data (preserving original voices/pan) for replay
+    this.#setupPipelines(sessionData.models);
 
     // Feed stored reasoning text into each model's pipeline concurrently
     this.#setState("Thinking");
@@ -206,15 +211,17 @@ export class Orchestrator {
 
       this.#activeSessions.set(model.name, session);
 
-      // Initialize model data for session storage
-      this.#sessionData.models.push({
-        name: model.name,
-        displayName: model.name,
-        color: model.color,
-        voice: model.voice,
-        pan: model.pan,
-        reasoningText: "",
-      });
+      // Initialize model data for session storage (skip if already present, e.g. replay)
+      if (!this.#sessionData.models.some((m) => m.name === model.name)) {
+        this.#sessionData.models.push({
+          name: model.name,
+          displayName: model.name,
+          color: model.color,
+          voice: model.voice,
+          pan: model.pan,
+          reasoningText: "",
+        });
+      }
     }
   }
 
@@ -341,6 +348,8 @@ export class Orchestrator {
     this.#storage?.saveQuestion(this.#questionText);
 
     this.#setState("Done");
+    // Reset to Idle so a new session can start
+    this.#state = "Idle";
   }
 
   #setState(newState) {

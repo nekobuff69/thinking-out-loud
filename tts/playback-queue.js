@@ -13,6 +13,7 @@ export class TTSPlaybackQueue {
   #queue = [];
   #playing = false;
   #stopped = false;
+  #softStopping = false;
   #paused = false;
   #sentenceTimeout = null;
 
@@ -51,13 +52,19 @@ export class TTSPlaybackQueue {
     }
   }
 
-  /** Stop gracefully: finish current sentence, discard remaining. */
+  /** Stop gracefully: let current sentence finish playing, discard the rest. */
   stop() {
-    this.#stopped = true;
+    this.#softStopping = true;
     this.#queue = [];
+    // Cancel the inter-sentence gap timeout so we don't start the next one
     if (this.#sentenceTimeout) {
       clearTimeout(this.#sentenceTimeout);
       this.#sentenceTimeout = null;
+    }
+    // If nothing is currently playing, resolve immediately
+    if (!this.#playing) {
+      this.#stopped = true;
+      this.#onIdle?.();
     }
   }
 
@@ -74,6 +81,12 @@ export class TTSPlaybackQueue {
   async #playNext() {
     if (this.#queue.length === 0) {
       this.#playing = false;
+      // If soft-stopping and queue is empty, we're done
+      if (this.#softStopping) {
+        this.#stopped = true;
+        this.#onIdle?.();
+        return;
+      }
       if (!this.#paused) this.#onIdle?.();
       return;
     }
@@ -82,30 +95,63 @@ export class TTSPlaybackQueue {
     const text = this.#queue.shift();
 
     if (this.#stopped || this.#paused) {
-      // Re-enqueue if paused mid-flight
       if (this.#paused && !this.#stopped) {
         this.#queue.unshift(text);
       }
       this.#playing = false;
       if (!this.#paused) this.#onIdle?.();
+      return;
+    }
+
+    // If soft-stopping, don't start new sentences —
+    // but if we're mid-synthesis let it finish playing
+    if (this.#softStopping) {
+      this.#queue = [];
+      this.#playing = false;
+      this.#stopped = true;
+      this.#onIdle?.();
       return;
     }
 
     // Synthesize
-    const buffer = await this.#ttsEngine.synthesize(text, this.#voice);
-
-    if (this.#stopped || this.#paused) {
-      if (this.#paused && !this.#stopped) {
-        this.#queue.unshift(text);
-      }
+    let buffer;
+    try {
+      buffer = await this.#ttsEngine.synthesize(text, this.#voice);
+    } catch (err) {
+      console.error(`TTS synthesis failed: ${err.message}`);
+      // Skip this sentence and move on — don't deadlock the session
       this.#playing = false;
-      if (!this.#paused) this.#onIdle?.();
+      if (!this.#paused && !this.#stopped) {
+        this.#playNext();
+      } else if (!this.#paused) {
+        this.#onIdle?.();
+      }
       return;
     }
 
-    // Play through the channel
+    // If soft-stopped or hard-stopped during synthesis, play the buffer anyway
+    // (soft-stop lets the current sentence finish), then stop.
+    if (this.#stopped) {
+      this.#playing = false;
+      this.#onIdle?.();
+      return;
+    }
+    if (this.#paused && !this.#softStopping) {
+      this.#queue.unshift(text);
+      this.#playing = false;
+      return;
+    }
+
+    // Play through the channel (always plays even if softStopping)
     await this.#playBuffer(buffer);
 
+    // After playback, if soft-stopping, transition to fully stopped
+    if (this.#softStopping) {
+      this.#playing = false;
+      this.#stopped = true;
+      this.#onIdle?.();
+      return;
+    }
     if (this.#stopped || this.#paused) {
       if (this.#paused && !this.#stopped) {
         this.#queue.unshift(text);
