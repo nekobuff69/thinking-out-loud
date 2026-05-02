@@ -1,3 +1,8 @@
+/**
+ * @typedef {import("./config.js").ModelConfig} ModelConfig
+ * @typedef {import("./session/storage.js").SessionData} SessionData
+ */
+
 import { config } from "./config.js";
 import { createPromptSelector } from "./ui/prompt-selector.js";
 import { createModeToggle } from "./ui/mode-toggle.js";
@@ -9,12 +14,16 @@ import { AudioGraph } from "./audio/audio-graph.js";
 import { Orchestrator } from "./session/orchestrator.js";
 import { SessionStore } from "./session/storage.js";
 
+import "./styles/global.css";
+import "./styles/top-bar.css";
+
 // --- Storage ---
 const store = new SessionStore(config.maxHistorySessions);
 
 // --- UI setup ---
 const topBar = document.getElementById("top-bar");
 const columnsContainer = document.getElementById("columns");
+if (!topBar || !columnsContainer) throw new Error("Required DOM elements missing");
 
 // Create columns for all 3 models
 const columns = new Map();

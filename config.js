@@ -1,3 +1,32 @@
+/**
+ * @typedef {Object} ModelConfig
+ * @property {string} name
+ * @property {string} provider
+ * @property {string} url
+ * @property {string} model
+ * @property {string} voice
+ * @property {string} color
+ * @property {number} pan
+ */
+
+/**
+ * @typedef {Object} TTSConfig
+ * @property {string} model
+ * @property {number} maxTokens
+ * @property {number} sentenceTimeoutTokens
+ */
+
+/**
+ * @typedef {Object} Config
+ * @property {string} defaultMode
+ * @property {string[]} curatedPrompts
+ * @property {ModelConfig[]} models
+ * @property {TTSConfig} tts
+ * @property {string} systemPrompt
+ * @property {number} maxHistorySessions
+ */
+
+/** @type {Config} */
 export const config = {
   defaultMode: "chorus",
 

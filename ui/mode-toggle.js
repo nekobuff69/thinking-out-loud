@@ -1,9 +1,26 @@
 /**
  * Renders a segmented Chorus / Monologue mode toggle.
  */
+import "./mode-toggle.css";
+
+/**
+ * @typedef {Object} ModeToggleAPI
+ * @property {() => string} getMode
+ * @property {(fn: (mode: string) => void) => void} onChange
+ * @property {(value: boolean) => void} setEnabled
+ */
+
+/**
+ * @param {HTMLElement} container
+ * @param {string} defaultMode
+ * @returns {ModeToggleAPI}
+ */
 export function createModeToggle(container, defaultMode) {
+  /** @type {string} */
   let currentMode = defaultMode;
+  /** @type {boolean} */
   let enabled = true;
+  /** @type {((mode: string) => void) | null} */
   let onChange = null;
 
   const wrapper = document.createElement("div");
@@ -48,6 +65,10 @@ export function createModeToggle(container, defaultMode) {
   wrapper.appendChild(group);
   container.insertBefore(wrapper, container.firstChild);
 
+  /**
+   * @param {boolean} value
+   * @returns {void}
+   */
   function setEnabled(value) {
     enabled = value;
     chorusBtn.disabled = !value;
@@ -55,7 +76,9 @@ export function createModeToggle(container, defaultMode) {
   }
 
   return {
+    /** @returns {string} */
     getMode() { return currentMode; },
+    /** @param {(mode: string) => void} fn */
     onChange(fn) { onChange = fn; },
     setEnabled,
   };

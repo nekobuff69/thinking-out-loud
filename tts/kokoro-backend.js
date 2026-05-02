@@ -6,17 +6,28 @@ import { pipeline } from "@huggingface/transformers";
  * Lazy-loads the model on first use; browser caches it in IndexedDB.
  */
 export class KokoroBackend extends TTSEngine {
+  /** @type {string} */
   #modelId;
+  /** @type {any} */
   #pipeline = null;
+  /** @type {Promise<void> | null} */
   #loadPromise = null;
+  /** @type {import("../audio/audio-graph.js").AudioGraph | null} */
   #audioGraph = null;
 
+  /**
+   * @param {string} [modelId]
+   * @param {import("../audio/audio-graph.js").AudioGraph | null} [audioGraph]
+   */
   constructor(modelId = "onnx-community/Kokoro-82M-ONNX", audioGraph = null) {
     super();
     this.#modelId = modelId;
     this.#audioGraph = audioGraph;
   }
 
+  /**
+   * @returns {Promise<void>}
+   */
   async load() {
     if (this.#pipeline) return;
     // Coalesce concurrent load() calls into a single pipeline initialization
@@ -37,6 +48,11 @@ export class KokoroBackend extends TTSEngine {
     }
   }
 
+  /**
+   * @param {string} text
+   * @param {string} voice
+   * @returns {Promise<AudioBuffer>}
+   */
   async synthesize(text, voice) {
     if (!this.#pipeline) {
       await this.load();
@@ -50,6 +66,11 @@ export class KokoroBackend extends TTSEngine {
     return await this.#toAudioBuffer(result.audio, result.sampling_rate);
   }
 
+  /**
+   * @param {Float32Array} float32Array
+   * @param {number} sourceSampleRate
+   * @returns {AudioBuffer | Promise<AudioBuffer>}
+   */
   #toAudioBuffer(float32Array, sourceSampleRate) {
     // Use the shared AudioContext so buffers match its sample rate.
     // If the model outputs at a different rate, we resample by creating
@@ -86,6 +107,9 @@ export class KokoroBackend extends TTSEngine {
     return offline.startRendering();
   }
 
+  /**
+   * @returns {void}
+   */
   destroy() {
     this.#pipeline = null;
   }

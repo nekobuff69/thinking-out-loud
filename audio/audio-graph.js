@@ -1,15 +1,29 @@
 /**
+ * @typedef {Object} AudioGraphChannel
+ * @property {(buffer: AudioBuffer, onEnd?: () => void) => AudioBufferSourceNode} play
+ * @property {AnalyserNode} analyser
+ * @property {GainNode} gain
+ * @property {() => void} stopAll
+ */
+
+/**
  * Manages a single shared AudioContext.
  * Creates per-model audio channels: gain → stereo panner → analyser → destination.
  * Implements ducking: when multiple channels play simultaneously, gain attenuates.
  */
 export class AudioGraph {
+  /** @type {AudioContext | null} */
   #ctx = null;
+  /** @type {Array<{gain: GainNode, activeSources: Set<AudioBufferSourceNode>, stopAll?: () => void}>} */
   #channels = [];
+  /** @type {number} */
   #activeCount = 0;
+  /** @type {(() => void) | null} */
   #visibilityHandler = null;
 
-  /** Lazily create or return the existing AudioContext. */
+  /** Lazily create or return the existing AudioContext.
+   * @returns {AudioContext}
+   */
   getContext() {
     if (!this.#ctx) {
       this.#ctx = new AudioContext();
@@ -31,7 +45,7 @@ export class AudioGraph {
   /**
    * Create a per-model audio channel.
    * @param {number} pan - Stereo position (-1 to 1)
-   * @returns {{ play: (buffer: AudioBuffer, onEnd?: () => void) => AudioBufferSourceNode, analyser: AnalyserNode, gain: GainNode }}
+   * @returns {AudioGraphChannel}
    */
   createChannel(pan) {
     const ctx = this.getContext();

@@ -24,6 +24,7 @@ export class TTSEngine {
 
   /**
    * Clean up runtime resources.
+   * @returns {void}
    */
   destroy() {
     throw new Error("TTSEngine.destroy() must be implemented");

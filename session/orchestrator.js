@@ -2,27 +2,65 @@ import { healthCheck } from "../llm/health-check.js";
 import { ChannelPipeline } from "./channel-pipeline.js";
 
 /**
+ * @typedef {import("../config.js").ModelConfig} ModelConfig
+ * @typedef {import("../config.js").TTSConfig} TTSConfig
+ * @typedef {import("../audio/audio-graph.js").AudioGraph} AudioGraph
+ * @typedef {import("../ui/column.js").ColumnAPI} ColumnAPI
+ * @typedef {import("./storage.js").SessionData} SessionData
+ * @typedef {import("./storage.js").SessionStore} SessionStore
+ */
+
+/**
+ * @typedef {Object} OrchestratorDeps
+ * @property {ModelConfig[]} models
+ * @property {string} systemPrompt
+ * @property {TTSConfig} ttsConfig
+ * @property {AudioGraph} audioGraph
+ * @property {Map<string, ColumnAPI>} columns
+ * @property {import("../tts/kokoro-backend.js").KokoroBackend} ttsEngine
+ * @property {SessionStore} storage
+ */
+
+/**
  * Manages a full Session lifecycle: Idle → Loading → Thinking → Speaking → Done.
  * Runs all configured models concurrently, each with its own pipeline.
  * Supports replay of stored sessions.
  */
 export class Orchestrator {
+  /** @type {ModelConfig[]} */
   #models;
+  /** @type {string} */
   #systemPrompt;
+  /** @type {TTSConfig} */
   #ttsConfig;
+  /** @type {AudioGraph} */
   #audioGraph;
+  /** @type {Map<string, ColumnAPI>} */
   #columns;
+  /** @type {import("../tts/kokoro-backend.js").KokoroBackend} */
   #ttsEngine;
-  #onStateChange;
+  /** @type {((state: string) => void) | null} */
+  #onStateChange = null;
+  /** @type {string} */
   #state = "Idle";
-  #activeSessions = new Map(); // model name → ChannelPipeline
+  /** @type {Map<string, ChannelPipeline>} */
+  #activeSessions = new Map();
+  /** @type {string} */
   #mode = "chorus";
+  /** @type {number} */
   #monologueIndex = 0;
+  /** @type {boolean} */
   #allStreamsDone = false;
+  /** @type {SessionStore} */
   #storage;
+  /** @type {SessionData | null} */
   #sessionData = null;
+  /** @type {string} */
   #questionText = "";
 
+  /**
+   * @param {OrchestratorDeps} deps
+   */
   constructor({ models, systemPrompt, ttsConfig, audioGraph, columns, ttsEngine, storage }) {
     this.#models = models;
     this.#systemPrompt = systemPrompt;
@@ -33,14 +71,24 @@ export class Orchestrator {
     this.#storage = storage;
   }
 
+  /**
+   * @param {(state: string) => void} fn
+   * @returns {void}
+   */
   onStateChange(fn) {
     this.#onStateChange = fn;
   }
 
+  /** @returns {string} */
   get state() {
     return this.#state;
   }
 
+  /**
+   * @param {string} question
+   * @param {string} [mode]
+   * @returns {Promise<void>}
+   */
   async start(question, mode) {
     if (this.#state !== "Idle") return;
     this.#mode = mode || "chorus";
@@ -96,7 +144,7 @@ export class Orchestrator {
     for (const pipeline of this.#activeSessions.values()) {
       fetches.push(
         pipeline.startStream(this.#systemPrompt, question).catch((err) => {
-          if (err.name !== "AbortError") {
+          if (err instanceof Error && err.name !== "AbortError") {
             console.error(`Stream error for ${pipeline.modelName}:`, err);
           }
           return err;
@@ -115,6 +163,10 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * @param {SessionData} sessionData
+   * @returns {Promise<void>}
+   */
   async replay(sessionData) {
     if (this.#state !== "Idle") return;
     this.#mode = sessionData.mode || "chorus";
@@ -155,7 +207,12 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * @param {Array<import("./storage.js").SessionModelData | ModelConfig> | undefined} [modelsToUse]
+   * @returns {void}
+   */
   #setupPipelines(modelsToUse) {
+    if (!this.#sessionData) return;
     const models = modelsToUse || this.#models;
     let index = 0;
     for (const model of models) {
@@ -164,7 +221,7 @@ export class Orchestrator {
       column.clear();
 
       const pipeline = new ChannelPipeline({
-        model,
+        model: /** @type {ModelConfig} */ (model),
         ttsConfig: this.#ttsConfig,
         column,
         ttsEngine: this.#ttsEngine,
@@ -240,6 +297,7 @@ export class Orchestrator {
   }
 
   #finishSession() {
+    if (!this.#sessionData) return;
     // Update stored reasoning text from pipeline state
     for (const [name, pipeline] of this.#activeSessions) {
       const modelData = this.#sessionData.models.find((m) => m.name === name);
@@ -257,6 +315,10 @@ export class Orchestrator {
     this.#state = "Idle";
   }
 
+  /**
+   * @param {string} newState
+   * @returns {void}
+   */
   #setState(newState) {
     this.#state = newState;
     this.#onStateChange?.(newState);

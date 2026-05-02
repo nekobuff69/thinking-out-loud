@@ -2,8 +2,26 @@
  * Renders the PromptSelector: curated prompt cards + free-text input + Ask button.
  * Returns an object with methods to manage the UI state.
  */
+import "./prompt-selector.css";
+
+/**
+ * @typedef {Object} PromptSelectorAPI
+ * @property {(fn: (question: string) => void) => void} onAsk
+ * @property {(questions: string[]) => void} updateRecentQuestions
+ * @property {() => string | null} getSelectedQuestion
+ * @property {(value: boolean) => void} setEnabled
+ */
+
+/**
+ * @param {HTMLElement} container
+ * @param {string[]} curatedPrompts
+ * @param {string[]} [recentQuestions]
+ * @returns {PromptSelectorAPI}
+ */
 export function createPromptSelector(container, curatedPrompts, recentQuestions = []) {
+  /** @type {string | null} */
   let selectedPrompt = null;
+  /** @type {boolean} */
   let enabled = true;
 
   const wrapper = document.createElement("div");
@@ -75,6 +93,10 @@ export function createPromptSelector(container, curatedPrompts, recentQuestions 
   recentList.className = "recent-list";
   recentContainer.appendChild(recentList);
 
+  /**
+   * @param {string[]} questions
+   * @returns {void}
+   */
   function renderRecentQuestions(questions) {
     recentList.innerHTML = "";
     if (!questions || questions.length === 0) {
@@ -101,6 +123,10 @@ export function createPromptSelector(container, curatedPrompts, recentQuestions 
     }
   }
 
+  /**
+   * @param {string[]} questions
+   * @returns {void}
+   */
   function updateRecentQuestions(questions) {
     renderRecentQuestions(questions);
   }
@@ -114,9 +140,12 @@ export function createPromptSelector(container, curatedPrompts, recentQuestions 
   wrapper.appendChild(askBtn);
   container.appendChild(wrapper);
 
+  /** @type {((question: string) => void) | null} */
   let onAsk = null;
+  /** @type {(() => void) | null} */
   let onSelectionChange = null;
 
+  /** @returns {string | null} */
   function getSelectedQuestion() {
     if (selectedPrompt) return selectedPrompt;
     const text = textInput.value.trim();
@@ -127,11 +156,19 @@ export function createPromptSelector(container, curatedPrompts, recentQuestions 
     askBtn.disabled = !enabled || !getSelectedQuestion();
   }
 
+  /**
+   * @param {boolean} value
+   * @returns {void}
+   */
+  /**
+   * @param {boolean} value
+   * @returns {void}
+   */
   function setEnabled(value) {
     enabled = value;
     textInput.disabled = !value;
-    cardsContainer.querySelectorAll(".prompt-card").forEach((c) => {
-      c.disabled = !value;
+    cardsContainer.querySelectorAll(".prompt-card").forEach((/** @type {Element} */ c) => {
+      /** @type {HTMLButtonElement} */ (c).disabled = !value;
     });
     updateAskButton();
   }

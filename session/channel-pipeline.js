@@ -3,25 +3,59 @@ import { SentenceBuffer } from "../tts/sentence-buffer.js";
 import { TTSPlaybackQueue } from "../tts/playback-queue.js";
 
 /**
+ * @typedef {import("../config.js").ModelConfig} ModelConfig
+ * @typedef {import("../config.js").TTSConfig} TTSConfig
+ * @typedef {import("../ui/column.js").ColumnAPI} ColumnAPI
+ * @typedef {import("../audio/audio-graph.js").AudioGraph} AudioGraph
+ * @typedef {import("../tts/kokoro-backend.js").KokoroBackend} KokoroBackend
+ */
+
+/**
+ * @typedef {Object} ChannelPipelineDeps
+ * @property {ModelConfig} model
+ * @property {TTSConfig} ttsConfig
+ * @property {ColumnAPI} column
+ * @property {KokoroBackend} ttsEngine
+ * @property {AudioGraph} audioGraph
+ * @property {() => void} [onIdle]
+ */
+
+/**
  * Owns one model's full pipeline:
  * SentenceBuffer → TTSPlaybackQueue → Column → Channel.
  * The Orchestrator becomes a thin Session state coordinator.
  */
 export class ChannelPipeline {
+  /** @type {ModelConfig} */
   #model;
+  /** @type {TTSConfig} */
   #ttsConfig;
+  /** @type {ColumnAPI} */
   #column;
+  /** @type {KokoroBackend} */
   #ttsEngine;
+  /** @type {AudioGraph} */
   #audioGraph;
+  /** @type {(() => void) | undefined} */
   #onIdle;
+  /** @type {import("../audio/audio-graph.js").AudioGraphChannel | null} */
   #channel = null;
+  /** @type {TTSPlaybackQueue | null} */
   #queue = null;
+  /** @type {SentenceBuffer | null} */
   #buffer = null;
+  /** @type {boolean} */
   #streamActive = false;
+  /** @type {boolean} */
   #contentHit = false;
+  /** @type {string} */
   #reasoningText = "";
+  /** @type {AbortController | null} */
   #abortController = null;
 
+  /**
+   * @param {ChannelPipelineDeps} deps
+   */
   constructor({ model, ttsConfig, column, ttsEngine, audioGraph, onIdle }) {
     this.#model = model;
     this.#ttsConfig = ttsConfig;
@@ -31,7 +65,9 @@ export class ChannelPipeline {
     this.#onIdle = onIdle;
   }
 
-  /** Create audio channel and attach waveform to column. */
+  /** Create audio channel and attach waveform to column.
+   * @returns {void}
+   */
   createChannel() {
     if (this.#channel) return;
     this.#channel = this.#audioGraph.createChannel(this.#model.pan);
@@ -53,6 +89,7 @@ export class ChannelPipeline {
    * @param {string} systemPrompt
    * @param {string} question
    * @param {AbortSignal} [signal]
+   * @returns {Promise<void | Error>}
    */
   startStream(systemPrompt, question, signal) {
     this.#streamActive = true;
@@ -107,6 +144,7 @@ export class ChannelPipeline {
   /**
    * Replay: feed stored text in chunks visually, then flush to TTS.
    * @param {string} text
+   * @returns {Promise<void>}
    */
   async drainText(text) {
     this.#streamActive = true;
@@ -136,7 +174,10 @@ export class ChannelPipeline {
     this.#streamActive = false;
   }
 
-  /** Append token to column and buffer (if not capped). */
+  /** Append token to column and buffer (if not capped).
+   * @param {string} token
+   * @returns {void}
+   */
   feedToken(token) {
     this.#column.appendToken(token);
     this.#reasoningText += token;
@@ -145,60 +186,82 @@ export class ChannelPipeline {
     }
   }
 
-  /** Soft stop: abort stream, finish current TTS sentence, then silence. */
+  /** Soft stop: abort stream, finish current TTS sentence, then silence.
+   * @returns {void}
+   */
   softStop() {
     this.#abortController?.abort();
     this.#queue?.stop();
   }
 
-  /** Flush any remaining buffer content. */
+  /** Flush any remaining buffer content.
+   * @returns {void}
+   */
   flush() {
     this.#buffer?.flush();
   }
 
-  /** Pause the playback queue. */
+  /** Pause the playback queue.
+   * @returns {void}
+   */
   pause() {
     this.#queue?.pause();
   }
 
-  /** Resume the playback queue. */
+  /** Resume the playback queue.
+   * @returns {void}
+   */
   resume() {
     this.#queue?.resume();
   }
 
-  /** Whether stream or TTS is still active. */
+  /** Whether stream or TTS is still active.
+   * @returns {boolean}
+   */
   get isActive() {
     return this.#streamActive || (this.#queue?.isActive ?? false);
   }
 
-  /** Whether the token cap has been reached. */
+  /** Whether the token cap has been reached.
+   * @returns {boolean}
+   */
   get isCapped() {
     return this.#buffer?.isCapped ?? false;
   }
 
-  /** Accumulated reasoning text. */
+  /** Accumulated reasoning text.
+   * @returns {string}
+   */
   get reasoningText() {
     return this.#reasoningText;
   }
 
-  /** Model name for orchestrator identification. */
+  /** Model name for orchestrator identification.
+   * @returns {string}
+   */
   get modelName() {
     return this.#model.name;
   }
 
-  /** Mark content boundary reached. */
+  /** Mark content boundary reached.
+   * @returns {void}
+   */
   setContentHit() {
     this.#contentHit = true;
     this.#buffer?.flush();
   }
 
-  /** Set error on column. */
+  /** Set error on column.
+   * @param {string} message
+   * @returns {void}
+   */
   setError(message) {
     this.#column.setError(message);
   }
 
-  #combineAbortSignals(...signals) {
+  #combineAbortSignals(/** @type {(AbortSignal | undefined)[]} */ ...signals) {
     const controller = new AbortController();
+    /** @type {Array<{signal: AbortSignal, handler: () => void}>} */
     const listeners = [];
     for (const signal of signals) {
       if (!signal) continue;

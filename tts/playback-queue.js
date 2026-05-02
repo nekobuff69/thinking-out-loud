@@ -1,4 +1,13 @@
 /**
+ * @typedef {Object} TTSPlaybackQueueDeps
+ * @property {import("./tts-engine.js").TTSEngine} ttsEngine
+ * @property {import("../audio/audio-graph.js").AudioGraphChannel} channel
+ * @property {string} voice
+ * @property {number} [sentenceGapMs]
+ * @property {() => void} [onIdle]
+ */
+
+/**
  * Manages a playback queue for TTS sentence chunks.
  * Handles synthesis, playback ordering, 200ms gaps, and graceful stop.
  *
@@ -14,18 +23,32 @@ const State = Object.freeze({
 });
 
 export class TTSPlaybackQueue {
+  /** @type {import("./tts-engine.js").TTSEngine} */
   #ttsEngine;
+  /** @type {import("../audio/audio-graph.js").AudioGraphChannel} */
   #channel;
+  /** @type {string} */
   #voice;
+  /** @type {number} */
   #sentenceGapMs;
+  /** @type {(() => void) | undefined} */
   #onIdle;
+  /** @type {string[]} */
   #queue = [];
+  /** @type {string} */
   #state = State.Idle;
+  /** @type {string | null} */
   #previousState = null;
+  /** @type {boolean} */
   #softStopRequested = false;
+  /** @type {ReturnType<typeof setTimeout> | null} */
   #sentenceTimeout = null;
+  /** @type {boolean} */
   #processing = false;
 
+  /**
+   * @param {TTSPlaybackQueueDeps} deps
+   */
   constructor({ ttsEngine, channel, voice, sentenceGapMs = 200, onIdle }) {
     this.#ttsEngine = ttsEngine;
     this.#channel = channel;
@@ -34,7 +57,10 @@ export class TTSPlaybackQueue {
     this.#onIdle = onIdle;
   }
 
-  /** Enqueue a sentence for synthesis and playback. */
+  /** Enqueue a sentence for synthesis and playback.
+   * @param {string} text
+   * @returns {void}
+   */
   enqueue(text) {
     if (this.#state === State.Stopped) return;
     this.#queue.push(text);
@@ -43,7 +69,9 @@ export class TTSPlaybackQueue {
     }
   }
 
-  /** Pause: stop processing new sentences (queued items are held). */
+  /** Pause: stop processing new sentences (queued items are held).
+   * @returns {void}
+   */
   pause() {
     if (this.#state === State.Stopped || this.#state === State.Paused) return;
     this.#previousState = this.#state;
@@ -54,7 +82,9 @@ export class TTSPlaybackQueue {
     this.#state = State.Paused;
   }
 
-  /** Resume: start processing the queue if items are waiting. */
+  /** Resume: start processing the queue if items are waiting.
+   * @returns {void}
+   */
   resume() {
     if (this.#state !== State.Paused) return;
     const prev = this.#previousState;
@@ -80,7 +110,9 @@ export class TTSPlaybackQueue {
     this.#playNext();
   }
 
-  /** Stop gracefully: let current sentence finish playing, discard the rest. */
+  /** Stop gracefully: let current sentence finish playing, discard the rest.
+   * @returns {void}
+   */
   stop() {
     if (this.#state === State.Stopped) return;
     this.#softStopRequested = true;
@@ -97,7 +129,9 @@ export class TTSPlaybackQueue {
     this.#onIdle?.();
   }
 
-  /** Whether the queue has any pending or in-flight work. */
+  /** Whether the queue has any pending or in-flight work.
+   * @returns {boolean}
+   */
   get isActive() {
     return (
       this.#state === State.Synthesizing ||
@@ -107,7 +141,9 @@ export class TTSPlaybackQueue {
     );
   }
 
-  /** Whether the queue is currently paused. */
+  /** Whether the queue is currently paused.
+   * @returns {boolean}
+   */
   get isPaused() {
     return this.#state === State.Paused;
   }
@@ -142,6 +178,7 @@ export class TTSPlaybackQueue {
         }
 
         const text = this.#queue.shift();
+        if (text === undefined) continue;
 
         // Synthesize
         let buffer;
@@ -149,7 +186,8 @@ export class TTSPlaybackQueue {
           this.#state = State.Synthesizing;
           buffer = await this.#ttsEngine.synthesize(text, this.#voice);
         } catch (err) {
-          console.error(`TTS synthesis failed: ${err.message}`);
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`TTS synthesis failed: ${message}`);
           if (this.#state === State.Paused) {
             this.#queue.unshift(text);
             return;
@@ -198,8 +236,12 @@ export class TTSPlaybackQueue {
     }
   }
 
+  /**
+   * @param {AudioBuffer} buffer
+   * @returns {Promise<void>}
+   */
   #playBuffer(buffer) {
-    return new Promise((resolve) => {
+    return new Promise((/** @type {(value: void) => void} */ resolve) => {
       this.#channel.play(buffer, () => resolve());
     });
   }

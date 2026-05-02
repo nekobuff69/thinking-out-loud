@@ -1,4 +1,11 @@
 /**
+ * @typedef {Object} StreamCallbacks
+ * @property {(token: string) => void} [onReasoningToken]
+ * @property {() => void} [onContentStart]
+ * @property {() => void} [onDone]
+ */
+
+/**
  * Streams reasoning tokens from an OpenAI-compatible chat completion endpoint.
  * Hides the full fetch → SSE parse → callback pipeline internally.
  * Retries once on any non-abort failure.
@@ -7,20 +14,20 @@
  * @param {string} model - Model identifier
  * @param {string} systemPrompt - System message content
  * @param {string} question - User question
- * @param {{onReasoningToken?: (token: string) => void, onContentStart?: () => void, onDone?: () => void}} callbacks
- * @param {object} [options] - Extra fields merged into the request body
+ * @param {StreamCallbacks} callbacks
+ * @param {Record<string, unknown> | AbortSignal} [options] - Extra fields merged into the request body
  * @param {AbortSignal} [signal] - Optional abort signal
  */
 export async function streamReasoning(url, model, systemPrompt, question, callbacks, options = {}, signal) {
   // Backward compat: callers may pass signal as the 6th argument
   if (options && typeof options.aborted === "boolean") {
-    signal = options;
+    signal = /** @type {AbortSignal} */ (options);
     options = {};
   }
 
   const endpoint = url.endsWith("/chat/completions") ? url : `${url}/chat/completions`;
 
-  const attempt = async (abortSignal) => {
+  const attempt = async (/** @type {AbortSignal | undefined} */ abortSignal) => {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -69,7 +76,7 @@ export async function streamReasoning(url, model, systemPrompt, question, callba
 
       callbacks.onDone?.();
     } catch (err) {
-      if (err.name !== "AbortError") {
+      if (err instanceof Error && err.name !== "AbortError") {
         console.error("LLM stream error:", err);
       }
       callbacks.onDone?.();
@@ -82,11 +89,17 @@ export async function streamReasoning(url, model, systemPrompt, question, callba
   try {
     await attempt(signal);
   } catch (err) {
-    if (err.name === "AbortError") throw err;
+    if (err instanceof Error && err.name === "AbortError") throw err;
     await attempt(signal);
   }
 }
 
+/**
+ * @param {string} part
+ * @param {StreamCallbacks} callbacks
+ * @param {{ contentStarted: boolean }} state
+ * @returns {boolean}
+ */
 function processSsePart(part, callbacks, state) {
   const lines = part.split("\n");
   for (const line of lines) {

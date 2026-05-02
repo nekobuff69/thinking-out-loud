@@ -2,6 +2,25 @@
  * History UI: renders a panel of past sessions.
  * Clicking a session triggers replay in the orchestrator.
  */
+import "./history.css";
+
+/**
+ * @typedef {Object} HistoryAPI
+ * @property {() => void} show
+ * @property {HTMLDivElement} panel
+ */
+
+/**
+ * @typedef {import("../session/storage.js").SessionData} SessionData
+ * @typedef {import("../session/storage.js").SessionStore} SessionStore
+ */
+
+/**
+ * @param {HTMLElement} container
+ * @param {SessionStore} store
+ * @param {(session: SessionData) => void} onReplay
+ * @returns {HistoryAPI}
+ */
 export function createHistory(container, store, onReplay) {
   const panel = document.createElement("div");
   panel.className = "history-panel";

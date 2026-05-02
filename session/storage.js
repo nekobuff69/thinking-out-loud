@@ -1,4 +1,30 @@
 /**
+ * @typedef {Object} SessionModelData
+ * @property {string} name
+ * @property {string} displayName
+ * @property {string} color
+ * @property {string} voice
+ * @property {number} pan
+ * @property {string} reasoningText
+ */
+
+/**
+ * @typedef {Object} SessionData
+ * @property {string} id
+ * @property {string} timestamp
+ * @property {string} question
+ * @property {string} mode
+ * @property {SessionModelData[]} models
+ */
+
+/**
+ * @typedef {Object} StorageAdapter
+ * @property {(key: string) => string | null} getItem
+ * @property {(key: string, value: string) => void} setItem
+ * @property {(key: string) => void} removeItem
+ */
+
+/**
  * SessionStore: persists completed sessions.
  * Handles save, load, list (sorted newest first), clear, and eviction.
  */
@@ -9,15 +35,24 @@ const RECENT_QUESTIONS_KEY = "tol_recent_questions";
 const MAX_RECENT_QUESTIONS = 10;
 
 export class SessionStore {
+  /** @type {number} */
   #maxSessions;
+  /** @type {StorageAdapter} */
   #adapter;
 
+  /**
+   * @param {number} [maxSessions]
+   * @param {StorageAdapter} [storageAdapter]
+   */
   constructor(maxSessions = 20, storageAdapter) {
     this.#maxSessions = maxSessions;
     this.#adapter = storageAdapter ?? new LocalStorageAdapter();
   }
 
-  /** Save a completed session. Evicts oldest if over limit. */
+  /** Save a completed session. Evicts oldest if over limit.
+   * @param {SessionData} session
+   * @returns {void}
+   */
   save(session) {
     const sessions = this.#loadSessions();
     sessions.unshift(session);
@@ -27,23 +62,33 @@ export class SessionStore {
     this.#writeSessions(sessions);
   }
 
-  /** Load a single session by id. Returns null if not found. */
+  /** Load a single session by id. Returns null if not found.
+   * @param {string} id
+   * @returns {SessionData | null}
+   */
   load(id) {
     const sessions = this.#loadSessions();
-    return sessions.find((s) => s.id === id) || null;
+    return sessions.find((/** @type {SessionData} */ s) => s.id === id) || null;
   }
 
-  /** List all sessions sorted by timestamp descending. */
+  /** List all sessions sorted by timestamp descending.
+   * @returns {SessionData[]}
+   */
   list() {
     return this.#loadSessions().slice();
   }
 
-  /** Clear all stored sessions. */
+  /** Clear all stored sessions.
+   * @returns {void}
+   */
   clear() {
     this.#adapter.removeItem(SESSIONS_KEY);
   }
 
-  /** Save a recent question (deduplicated, most recent first). */
+  /** Save a recent question (deduplicated, most recent first).
+   * @param {string} text
+   * @returns {void}
+   */
   saveQuestion(text) {
     if (!text?.trim()) return;
     const trimmed = text.trim();
@@ -60,7 +105,9 @@ export class SessionStore {
     this.#adapter.setItem(RECENT_QUESTIONS_KEY, JSON.stringify(questions));
   }
 
-  /** Get recent questions (most recent first). */
+  /** Get recent questions (most recent first).
+   * @returns {string[]}
+   */
   getQuestions() {
     return this.#loadQuestions();
   }
@@ -74,6 +121,10 @@ export class SessionStore {
     }
   }
 
+  /**
+   * @param {SessionData[]} sessions
+   * @returns {void}
+   */
   #writeSessions(sessions) {
     try {
       this.#adapter.setItem(SESSIONS_KEY, JSON.stringify(sessions));

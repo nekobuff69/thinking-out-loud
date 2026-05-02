@@ -2,12 +2,19 @@
  * Renders a live waveform visualization on a canvas element.
  * Driven by an AnalyserNode's time-domain data.
  * Shows amplitude bars when audio is playing, idle breathing when silent.
+ *
+ * @param {HTMLCanvasElement} canvas
+ * @param {AnalyserNode} analyser
+ * @param {string} color
+ * @returns {{ stop: () => void }}
  */
 export function createWaveform(canvas, analyser, color) {
-  const ctx = canvas.getContext("2d");
+  const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
+  if (!ctx) throw new Error("Canvas 2D context not supported");
   const bufferLength = analyser.frequencyBinCount;
   const dataArray = new Uint8Array(bufferLength);
 
+  /** @type {number | null} */
   let animationId = null;
   let isActive = false;
   let idlePhase = 0;

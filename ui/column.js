@@ -1,8 +1,27 @@
 import { createWaveform } from "../audio/waveform.js";
+import "./column.css";
+
+/**
+ * @typedef {Object} ColumnAPI
+ * @property {HTMLDivElement} element
+ * @property {(token: string) => void} appendToken
+ * @property {() => void} clear
+ * @property {(message: string) => void} setError
+ * @property {(analyserNode: AnalyserNode, color: string) => void} attachWaveform
+ * @property {() => void} stopWaveform
+ */
+
+/**
+ * @typedef {import("../config.js").ModelConfig} ModelConfig
+ */
 
 /**
  * Renders a single model Column: display name, monospaced reasoning text,
  * auto-scroll with manual scroll-back, and "new content below" indicator.
+ *
+ * @param {HTMLElement} container
+ * @param {ModelConfig} model
+ * @returns {ColumnAPI}
  */
 export function createColumn(container, model) {
   const col = document.createElement("div");
@@ -35,10 +54,13 @@ export function createColumn(container, model) {
   col.appendChild(waveform);
   container.appendChild(col);
 
+  /** @type {ReturnType<typeof import("../audio/waveform.js").createWaveform> | null} */
   let waveformController = null;
 
   // Scroll tracking
+  /** @type {boolean} */
   let userScrolledUp = false;
+  /** @type {boolean} */
   let hasNewContentBelow = false;
 
   reasoningEl.addEventListener("scroll", () => {
@@ -51,8 +73,13 @@ export function createColumn(container, model) {
     }
   });
 
+  /** @type {string} */
   let reasoningText = "";
 
+  /**
+   * @param {string} token
+   * @returns {void}
+   */
   function appendToken(token) {
     reasoningText += token;
     reasoningEl.textContent = reasoningText;
@@ -71,16 +98,27 @@ export function createColumn(container, model) {
     }
   }
 
+  /**
+   * @param {AnalyserNode} analyserNode
+   * @param {string} color
+   * @returns {void}
+   */
   function attachWaveform(analyserNode, color) {
     stopWaveform();
     waveformController = createWaveform(waveform, analyserNode, color);
   }
 
+  /**
+   * @returns {void}
+   */
   function stopWaveform() {
     waveformController?.stop();
     waveformController = null;
   }
 
+  /**
+   * @returns {void}
+   */
   function clear() {
     col.classList.remove("has-error");
     reasoningText = "";
@@ -91,6 +129,10 @@ export function createColumn(container, model) {
     stopWaveform();
   }
 
+  /**
+   * @param {string} message
+   * @returns {void}
+   */
   function setError(message) {
     col.classList.add("has-error");
     const span = document.createElement("span");

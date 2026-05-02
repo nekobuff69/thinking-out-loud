@@ -7,10 +7,18 @@
   "type": "module",
   "main": "getCompletion.js",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "dotenv": "^17.2.3"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10"
   }
 }

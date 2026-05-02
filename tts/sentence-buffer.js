@@ -4,12 +4,19 @@
  * or the timeout token threshold is reached.
  */
 export class SentenceBuffer {
+  /** @type {string} */
   #buffer = "";
+  /** @type {number} */
   #tokenCount = 0;
+  /** @type {number} */
   #maxTokens;
+  /** @type {number} */
   #timeoutTokens;
+  /** @type {number} */
   #totalTokensFlushed = 0;
+  /** @type {boolean} */
   #capped = false;
+  /** @type {(text: string) => void} */
   #onSentence;
 
   /**
@@ -24,7 +31,10 @@ export class SentenceBuffer {
     this.#onSentence = onSentence;
   }
 
-  /** Feed a single token from the stream. */
+  /** Feed a single token from the stream.
+   * @param {string} token
+   * @returns {void}
+   */
   feed(token) {
     if (this.#capped) return;
 
@@ -65,7 +75,9 @@ export class SentenceBuffer {
     }
   }
 
-  /** Flush any remaining buffered text (called when stream ends). */
+  /** Flush any remaining buffered text (called when stream ends).
+   * @returns {void}
+   */
   flush() {
     const text = this.#buffer.trim();
     if (text) this.#onSentence(text);
@@ -73,7 +85,9 @@ export class SentenceBuffer {
     this.#tokenCount = 0;
   }
 
-  /** Whether the token cap has been reached. */
+  /** Whether the token cap has been reached.
+   * @returns {boolean}
+   */
   get isCapped() {
     return this.#capped;
   }
@@ -87,6 +101,10 @@ export class SentenceBuffer {
     "govt", "assn", "bldg", "div",
   ]);
 
+  /**
+   * @param {string} text
+   * @returns {number}
+   */
   #findSentenceBoundary(text) {
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
