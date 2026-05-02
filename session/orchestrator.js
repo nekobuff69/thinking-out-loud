@@ -95,7 +95,12 @@ export class Orchestrator {
 
     for (const pipeline of this.#activeSessions.values()) {
       fetches.push(
-        pipeline.startStream(this.#systemPrompt, question).catch((err) => err)
+        pipeline.startStream(this.#systemPrompt, question).catch((err) => {
+          if (err.name !== "AbortError") {
+            console.error(`Stream error for ${pipeline.modelName}:`, err);
+          }
+          return err;
+        })
       );
     }
 

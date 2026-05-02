@@ -59,7 +59,7 @@ export class ChannelPipeline {
     this.#contentHit = false;
     this.#abortController = new AbortController();
 
-    const combinedSignal = this.#combineAbortSignals(
+    const { signal: combinedSignal, cleanup: cleanupSignals } = this.#combineAbortSignals(
       signal,
       this.#abortController.signal
     );
@@ -96,11 +96,11 @@ export class ChannelPipeline {
       .catch((err) => {
         if (err.name === "AbortError") return;
         this.setError(`Error: ${err.message}`);
-        this.#streamActive = false;
         throw err;
       })
       .finally(() => {
         this.#streamActive = false;
+        cleanupSignals?.();
       });
   }
 
@@ -199,14 +199,22 @@ export class ChannelPipeline {
 
   #combineAbortSignals(...signals) {
     const controller = new AbortController();
+    const listeners = [];
     for (const signal of signals) {
       if (!signal) continue;
       if (signal.aborted) {
         controller.abort();
-        return controller.signal;
+        return { signal: controller.signal, cleanup: () => {} };
       }
-      signal.addEventListener("abort", () => controller.abort(), { once: true });
+      const handler = () => controller.abort();
+      signal.addEventListener("abort", handler, { once: true });
+      listeners.push({ signal, handler });
     }
-    return controller.signal;
+    const cleanup = () => {
+      for (const { signal, handler } of listeners) {
+        signal.removeEventListener("abort", handler);
+      }
+    };
+    return { signal: controller.signal, cleanup };
   }
 }
