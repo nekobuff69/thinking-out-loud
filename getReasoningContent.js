@@ -8,11 +8,10 @@ export const getReasoningContent = async (
 	// apikey
 ) => {
 	console.log(`\n****PROCESSING****`);
-	const baseUrl = url.replace(/\/chat\/completions$/, "");
 	const tokens = [];
 
 	await streamReasoning(
-		baseUrl,
+		url,
 		model,
 		systemPrompt,
 		prompt,
@@ -20,6 +19,10 @@ export const getReasoningContent = async (
 			onReasoningToken: (token) => tokens.push(token),
 			onContentStart: () => {},
 			onDone: () => {},
+		},
+		{
+			reasoning: { effort: "high" },
+			temperature: 1,
 		}
 	);
 

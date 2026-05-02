@@ -3,16 +3,25 @@
  * Hides the full fetch → SSE parse → callback pipeline internally.
  * Retries once on any non-abort failure.
  *
- * @param {string} baseUrl - Provider base URL (e.g. http://localhost:1234/v1)
+ * @param {string} url - Provider URL (e.g. http://localhost:1234/v1 or http://localhost:1234/v1/chat/completions)
  * @param {string} model - Model identifier
  * @param {string} systemPrompt - System message content
  * @param {string} question - User question
  * @param {{onReasoningToken?: (token: string) => void, onContentStart?: () => void, onDone?: () => void}} callbacks
+ * @param {object} [options] - Extra fields merged into the request body
  * @param {AbortSignal} [signal] - Optional abort signal
  */
-export async function streamReasoning(baseUrl, model, systemPrompt, question, callbacks, signal) {
+export async function streamReasoning(url, model, systemPrompt, question, callbacks, options = {}, signal) {
+  // Backward compat: callers may pass signal as the 6th argument
+  if (options && typeof options.aborted === "boolean") {
+    signal = options;
+    options = {};
+  }
+
+  const endpoint = url.endsWith("/chat/completions") ? url : `${url}/chat/completions`;
+
   const attempt = async (abortSignal) => {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: abortSignal,
@@ -23,6 +32,7 @@ export async function streamReasoning(baseUrl, model, systemPrompt, question, ca
           { role: "user", content: question },
         ],
         stream: true,
+        ...options,
       }),
     });
 
