@@ -154,18 +154,7 @@ export class TTSPlaybackQueue {
             this.#queue.unshift(text);
             return;
           }
-          if (this.#state === State.Stopped) {
-            this.#state = State.Idle;
-            this.#onIdle?.();
-            return;
-          }
           continue;
-        }
-
-        if (this.#state === State.Stopped) {
-          this.#state = State.Idle;
-          this.#onIdle?.();
-          return;
         }
 
         if (this.#state === State.Paused && !this.#softStopRequested) {
@@ -176,11 +165,6 @@ export class TTSPlaybackQueue {
         // Play through the channel (soft-stop lets the current sentence finish)
         this.#state = State.Playing;
         await this.#playBuffer(buffer);
-
-        if (this.#state === State.Stopped) {
-          this.#onIdle?.();
-          return;
-        }
 
         if (this.#softStopRequested) {
           this.#state = State.Stopped;
