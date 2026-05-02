@@ -6,6 +6,7 @@ import { TTSPlaybackQueue } from "../tts/playback-queue.js";
 /**
  * Manages a full Session lifecycle: Idle → Loading → Thinking → Speaking → Done.
  * Runs all configured models concurrently, each with its own pipeline.
+ * Supports replay of stored sessions.
  */
 export class Orchestrator {
   #models;
@@ -21,8 +22,11 @@ export class Orchestrator {
   #mode = "chorus";
   #monologueIndex = 0;
   #allStreamsDone = false;
+  #storage;
+  #sessionData = null;
+  #questionText = "";
 
-  constructor({ models, systemPrompt, ttsConfig, audioGraph, columns, ttsEngine, onChannelCreated }) {
+  constructor({ models, systemPrompt, ttsConfig, audioGraph, columns, ttsEngine, onChannelCreated, storage }) {
     this.#models = models;
     this.#systemPrompt = systemPrompt;
     this.#ttsConfig = ttsConfig;
@@ -30,6 +34,7 @@ export class Orchestrator {
     this.#columns = columns;
     this.#ttsEngine = ttsEngine;
     this.#onChannelCreated = onChannelCreated;
+    this.#storage = storage;
   }
 
   onStateChange(fn) {
@@ -43,14 +48,83 @@ export class Orchestrator {
   async start(question, mode) {
     if (this.#state !== "Idle") return;
     this.#mode = mode || "chorus";
+    this.#questionText = question;
     this.#monologueIndex = 0;
     this.#allStreamsDone = false;
     this.#setState("Loading");
 
     await this.#ttsEngine.load();
     this.#activeSessions.clear();
+    this.#sessionData = {
+      id: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      question,
+      mode: this.#mode,
+      models: [],
+    };
 
-    // Build per-model pipelines
+    this.#setupPipelines();
+
+    // Fire all 3 LLM streams concurrently
+    this.#setState("Thinking");
+    const fetches = [];
+
+    for (const session of this.#activeSessions.values()) {
+      session.streamActive = true;
+      fetches.push(this.#runStream(session, question).catch((err) => err));
+    }
+
+    await Promise.all(fetches);
+    this.#allStreamsDone = true;
+
+    // All streams done — check if TTS is still playing
+    if (this.#anyTtsActive()) {
+      this.#setState("Speaking");
+    } else {
+      this.#finishSession();
+    }
+  }
+
+  async replay(sessionData) {
+    if (this.#state !== "Idle") return;
+    this.#mode = sessionData.mode || "chorus";
+    this.#questionText = sessionData.question;
+    this.#monologueIndex = 0;
+    this.#allStreamsDone = false;
+    this.#setState("Loading");
+
+    await this.#ttsEngine.load();
+    this.#activeSessions.clear();
+    this.#sessionData = { ...sessionData, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
+
+    this.#setupPipelines();
+
+    // Feed stored reasoning text into each model's pipeline concurrently
+    this.#setState("Thinking");
+
+    const textFeeds = [];
+    for (const modelData of sessionData.models) {
+      const session = this.#activeSessions.get(modelData.name);
+      if (!session) continue;
+      const fullText = modelData.reasoningText || "";
+      textFeeds.push(this.#replayText(session, fullText).then(() => {
+        session.streamActive = false;
+      }));
+    }
+
+    await Promise.all(textFeeds);
+
+    this.#allStreamsDone = true;
+
+    // Check if TTS is still playing
+    if (this.#anyTtsActive()) {
+      this.#setState("Speaking");
+    } else {
+      this.#finishSession();
+    }
+  }
+
+  #setupPipelines() {
     for (const model of this.#models) {
       const column = this.#columns.get(model.name);
       if (!column) continue;
@@ -66,6 +140,7 @@ export class Orchestrator {
         streamActive: false,
         ttsActive: false,
         contentHit: false,
+        reasoningText: "",
       };
 
       session.queue = new TTSPlaybackQueue({
@@ -100,38 +175,16 @@ export class Orchestrator {
       });
 
       this.#activeSessions.set(model.name, session);
-    }
 
-    // Fire all 3 LLM streams concurrently
-    this.#setState("Thinking");
-    const fetches = [];
-
-    for (const session of this.#activeSessions.values()) {
-      session.streamActive = true;
-      fetches.push(this.#runStream(session, question).catch((err) => err));
-    }
-
-    await Promise.all(fetches);
-    this.#allStreamsDone = true;
-
-    // All streams done — check if TTS is still playing
-    if (this.#anyTtsActive()) {
-      this.#setState("Speaking");
-    } else {
-      this.#finishSession();
-    }
-  }
-
-  #advanceMonologue() {
-    if (this.#mode !== "monologue") return;
-    const sessionKeys = [...this.#activeSessions.keys()];
-    this.#monologueIndex++;
-    if (this.#monologueIndex < sessionKeys.length) {
-      const nextSession = this.#activeSessions.get(sessionKeys[this.#monologueIndex]);
-      if (nextSession) {
-        nextSession.ttsActive = true;
-        nextSession.queue.resume();
-      }
+      // Initialize model data for session storage
+      this.#sessionData.models.push({
+        name: model.name,
+        displayName: model.name,
+        color: model.color,
+        voice: model.voice,
+        pan: model.pan,
+        reasoningText: "",
+      });
     }
   }
 
@@ -149,6 +202,7 @@ export class Orchestrator {
       await parseStream(stream, {
         onReasoningToken: (token) => {
           column.appendToken(token);
+          session.reasoningText += token;
           if (!session.contentHit && !buffer.isCapped) {
             buffer.feed(token);
           }
@@ -169,6 +223,41 @@ export class Orchestrator {
       column.setError(`Error: ${err.message}`);
       session.streamActive = false;
       this.#checkAllDone();
+    }
+  }
+
+  async #replayText(session, text) {
+    const { column, buffer } = session;
+    session.reasoningText = text;
+
+    // Feed text character by character with small delay for visual effect
+    const chunkSize = 3;
+    for (let i = 0; i < text.length; i += chunkSize) {
+      const chunk = text.slice(i, i + chunkSize);
+      column.appendToken(chunk);
+      if (!buffer.isCapped) {
+        buffer.feed(chunk);
+      }
+      // Small delay for visual streaming effect
+      if (i % 30 === 0) {
+        await new Promise((r) => setTimeout(r, 16));
+      }
+    }
+
+    // Flush any remaining buffer content
+    buffer.flush();
+  }
+
+  #advanceMonologue() {
+    if (this.#mode !== "monologue") return;
+    const sessionKeys = [...this.#activeSessions.keys()];
+    this.#monologueIndex++;
+    if (this.#monologueIndex < sessionKeys.length) {
+      const nextSession = this.#activeSessions.get(sessionKeys[this.#monologueIndex]);
+      if (nextSession) {
+        nextSession.ttsActive = true;
+        nextSession.queue.resume();
+      }
     }
   }
 
@@ -203,6 +292,18 @@ export class Orchestrator {
   }
 
   #finishSession() {
+    // Update stored reasoning text from session state
+    for (const [name, session] of this.#activeSessions) {
+      const modelData = this.#sessionData.models.find((m) => m.name === name);
+      if (modelData) {
+        modelData.reasoningText = session.reasoningText;
+      }
+    }
+
+    // Save to storage
+    this.#storage?.save(this.#sessionData);
+    this.#storage?.saveQuestion(this.#questionText);
+
     this.#setState("Done");
   }
 

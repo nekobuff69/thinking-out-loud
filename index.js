@@ -1,11 +1,16 @@
 import { config } from "./config.js";
 import { createPromptSelector } from "./ui/prompt-selector.js";
 import { createModeToggle } from "./ui/mode-toggle.js";
+import { createHistory } from "./ui/history.js";
 import { createColumn } from "./ui/column.js";
 import { KokoroBackend } from "./tts/kokoro-backend.js";
 import { AudioGraph } from "./audio/audio-graph.js";
 import { createWaveform } from "./audio/waveform.js";
 import { Orchestrator } from "./session/orchestrator.js";
+import { SessionStore } from "./session/storage.js";
+
+// --- Storage ---
+const store = new SessionStore(config.maxHistorySessions);
 
 // --- UI setup ---
 const topBar = document.getElementById("top-bar");
@@ -18,8 +23,16 @@ for (const model of config.models) {
   columns.set(model.name, column);
 }
 
-// Prompt selector
-const promptSelector = createPromptSelector(topBar, config.curatedPrompts);
+// History button
+const historyBtn = document.createElement("button");
+historyBtn.className = "ask-btn";
+historyBtn.textContent = "History";
+historyBtn.style.cssText = "margin-left:auto;margin-right:0.5rem;";
+topBar.appendChild(historyBtn);
+
+// Prompt selector (with recent questions)
+const recentQuestions = store.getQuestions();
+const promptSelector = createPromptSelector(topBar, config.curatedPrompts, recentQuestions);
 
 // Mode toggle
 const modeToggle = createModeToggle(topBar, config.defaultMode);
@@ -36,6 +49,15 @@ const stateLabel = document.createElement("span");
 stateLabel.style.cssText = "color:#555;font-size:0.8rem;margin-left:1rem;";
 topBar.appendChild(stateLabel);
 
+// History panel
+const historyPanel = createHistory(document.body, store, (session) => {
+  orchestrator.replay(session);
+});
+
+historyBtn.addEventListener("click", () => {
+  historyPanel.show();
+});
+
 // --- Audio + TTS ---
 const audioGraph = new AudioGraph();
 const ttsEngine = new KokoroBackend(config.tts.model);
@@ -48,6 +70,7 @@ const orchestrator = new Orchestrator({
   audioGraph,
   columns,
   ttsEngine,
+  storage: store,
   onChannelCreated: (modelName, channel) => {
     const model = config.models.find((m) => m.name === modelName);
     const column = columns.get(modelName);
@@ -63,13 +86,17 @@ orchestrator.onStateChange((state) => {
   if (state === "Loading" || state === "Thinking" || state === "Speaking") {
     promptSelector.setEnabled(false);
     modeToggle.setEnabled(false);
+    historyBtn.disabled = true;
     stopBtn.style.display = "inline-block";
   }
 
   if (state === "Done") {
     promptSelector.setEnabled(true);
     modeToggle.setEnabled(true);
+    historyBtn.disabled = false;
     stopBtn.style.display = "none";
+    // Refresh recent questions
+    promptSelector.updateRecentQuestions(store.getQuestions());
   }
 });
 

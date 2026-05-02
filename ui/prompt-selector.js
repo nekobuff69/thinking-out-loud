@@ -2,7 +2,7 @@
  * Renders the PromptSelector: curated prompt cards + free-text input + Ask button.
  * Returns an object with methods to manage the UI state.
  */
-export function createPromptSelector(container, curatedPrompts) {
+export function createPromptSelector(container, curatedPrompts, recentQuestions = []) {
   let selectedPrompt = null;
   let enabled = true;
 
@@ -61,6 +61,54 @@ export function createPromptSelector(container, curatedPrompts) {
     }
   });
 
+  // Recent questions section
+  const recentContainer = document.createElement("div");
+  recentContainer.className = "recent-questions";
+  recentContainer.style.display = "none";
+
+  const recentLabel = document.createElement("div");
+  recentLabel.className = "recent-label";
+  recentLabel.textContent = "Recent";
+  recentContainer.appendChild(recentLabel);
+
+  const recentList = document.createElement("div");
+  recentList.className = "recent-list";
+  recentContainer.appendChild(recentList);
+
+  function renderRecentQuestions(questions) {
+    recentList.innerHTML = "";
+    if (!questions || questions.length === 0) {
+      recentContainer.style.display = "none";
+      return;
+    }
+    recentContainer.style.display = "block";
+    for (const q of questions) {
+      const item = document.createElement("button");
+      item.className = "recent-item";
+      item.type = "button";
+      item.textContent = q;
+      item.addEventListener("click", () => {
+        if (!enabled) return;
+        textInput.value = q;
+        // Deselect cards
+        cardsContainer.querySelectorAll(".prompt-card").forEach((c) =>
+          c.classList.remove("selected")
+        );
+        selectedPrompt = null;
+        onSelectionChange?.();
+      });
+      recentList.appendChild(item);
+    }
+  }
+
+  function updateRecentQuestions(questions) {
+    renderRecentQuestions(questions);
+  }
+
+  // Initial render
+  renderRecentQuestions(recentQuestions);
+
+  wrapper.appendChild(recentContainer);
   wrapper.appendChild(cardsContainer);
   wrapper.appendChild(textInput);
   wrapper.appendChild(askBtn);
@@ -93,6 +141,7 @@ export function createPromptSelector(container, curatedPrompts) {
 
   return {
     onAsk(fn) { onAsk = fn; },
+    updateRecentQuestions,
     getSelectedQuestion,
     setEnabled,
   };
