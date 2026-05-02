@@ -5,7 +5,7 @@ import { createHistory } from "./ui/history.js";
 import { createColumn } from "./ui/column.js";
 import { KokoroBackend } from "./tts/kokoro-backend.js";
 import { AudioGraph } from "./audio/audio-graph.js";
-import { createWaveform } from "./audio/waveform.js";
+
 import { Orchestrator } from "./session/orchestrator.js";
 import { SessionStore } from "./session/storage.js";
 
@@ -73,13 +73,6 @@ const orchestrator = new Orchestrator({
   columns,
   ttsEngine,
   storage: store,
-  onChannelCreated: (modelName, channel) => {
-    const model = config.models.find((m) => m.name === modelName);
-    const column = columns.get(modelName);
-    if (model && column) {
-      createWaveform(column.waveform, channel.analyser, model.color);
-    }
-  },
 });
 
 orchestrator.onStateChange((state) => {

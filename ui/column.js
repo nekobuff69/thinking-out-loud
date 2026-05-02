@@ -1,3 +1,5 @@
+import { createWaveform } from "../audio/waveform.js";
+
 /**
  * Renders a single model Column: display name, monospaced reasoning text,
  * auto-scroll with manual scroll-back, and "new content below" indicator.
@@ -24,7 +26,6 @@ export function createColumn(container, model) {
   scrollIndicator.style.color = model.color;
   scrollIndicator.style.display = "none";
 
-  // Waveform canvas placeholder (for later issues)
   const waveform = document.createElement("canvas");
   waveform.className = "column-waveform";
 
@@ -33,6 +34,8 @@ export function createColumn(container, model) {
   col.appendChild(scrollIndicator);
   col.appendChild(waveform);
   container.appendChild(col);
+
+  let waveformController = null;
 
   // Scroll tracking
   let userScrolledUp = false;
@@ -68,6 +71,16 @@ export function createColumn(container, model) {
     }
   }
 
+  function attachWaveform(analyserNode, color) {
+    stopWaveform();
+    waveformController = createWaveform(waveform, analyserNode, color);
+  }
+
+  function stopWaveform() {
+    waveformController?.stop();
+    waveformController = null;
+  }
+
   function clear() {
     col.classList.remove("has-error");
     reasoningText = "";
@@ -75,6 +88,7 @@ export function createColumn(container, model) {
     scrollIndicator.style.display = "none";
     userScrolledUp = false;
     hasNewContentBelow = false;
+    stopWaveform();
   }
 
   function setError(message) {
@@ -92,6 +106,7 @@ export function createColumn(container, model) {
     appendToken,
     clear,
     setError,
-    waveform,
+    attachWaveform,
+    stopWaveform,
   };
 }

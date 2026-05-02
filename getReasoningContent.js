@@ -1,3 +1,5 @@
+import { streamReasoning } from "./llm/llm-stream.js";
+
 export const getReasoningContent = async (
 	url,
 	model,
@@ -6,28 +8,22 @@ export const getReasoningContent = async (
 	// apikey
 ) => {
 	console.log(`\n****PROCESSING****`);
-	const response = await fetch(url, {
-		headers: {
-			// Authorization: `Bearer ${apikey}`,
-			"Content-Type": "application/json",
-		},
-		method: "POST",
-		body: JSON.stringify({
-			model: model,
-			messages: [
-				{role: "system", content: systemPrompt},
-				{role: "user", content: prompt},
-			],
-			reasoning: {
-				effort: "high",
-			},
-			temperature: 1,
-		}),
-	});
+	const baseUrl = url.replace(/\/chat\/completions$/, "");
+	const tokens = [];
 
-	const data = await response.json();
-	const reasoning = data.choices[0].message.reasoning_content;
-	// qwen3 series, nvidia, use key 'reasoning_content'; gpt-oss, use key 'reasoning'
+	await streamReasoning(
+		baseUrl,
+		model,
+		systemPrompt,
+		prompt,
+		{
+			onReasoningToken: (token) => tokens.push(token),
+			onContentStart: () => {},
+			onDone: () => {},
+		}
+	);
+
+	const reasoning = tokens.join("");
 	console.log(`\n****REASONING CONTENT****\n${reasoning}`);
 	console.log(`\n****END OF REASONING****`);
 	return reasoning;

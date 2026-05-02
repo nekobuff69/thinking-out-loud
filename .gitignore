@@ -1,2 +1,5 @@
 node_modules/
 .env
+sub-agent-prompts/
+legacy-test-run-data/
+.scratch/

@@ -1,8 +1,5 @@
-import { streamCompletion } from "../llm/lm-studio-client.js";
-import { parseStream } from "../llm/stream-parser.js";
 import { healthCheck } from "../llm/health-check.js";
-import { SentenceBuffer } from "../tts/sentence-buffer.js";
-import { TTSPlaybackQueue } from "../tts/playback-queue.js";
+import { ChannelPipeline } from "./channel-pipeline.js";
 
 /**
  * Manages a full Session lifecycle: Idle → Loading → Thinking → Speaking → Done.
@@ -18,24 +15,21 @@ export class Orchestrator {
   #ttsEngine;
   #onStateChange;
   #state = "Idle";
-  #activeSessions = new Map();
-  #onChannelCreated;
+  #activeSessions = new Map(); // model name → ChannelPipeline
   #mode = "chorus";
   #monologueIndex = 0;
   #allStreamsDone = false;
   #storage;
   #sessionData = null;
   #questionText = "";
-  #abortControllers = new Map();
 
-  constructor({ models, systemPrompt, ttsConfig, audioGraph, columns, ttsEngine, onChannelCreated, storage }) {
+  constructor({ models, systemPrompt, ttsConfig, audioGraph, columns, ttsEngine, storage }) {
     this.#models = models;
     this.#systemPrompt = systemPrompt;
     this.#ttsConfig = ttsConfig;
     this.#audioGraph = audioGraph;
     this.#columns = columns;
     this.#ttsEngine = ttsEngine;
-    this.#onChannelCreated = onChannelCreated;
     this.#storage = storage;
   }
 
@@ -53,7 +47,6 @@ export class Orchestrator {
     this.#questionText = question;
     this.#monologueIndex = 0;
     this.#allStreamsDone = false;
-    this.#abortControllers.clear();
     this.#audioGraph.clearChannels();
     this.#setState("Loading");
 
@@ -96,20 +89,21 @@ export class Orchestrator {
     // Set up pipelines only for reachable models
     this.#setupPipelines(reachableModels);
 
-    // Fire all 3 LLM streams concurrently
+    // Fire all LLM streams concurrently
     this.#setState("Thinking");
     const fetches = [];
 
-    for (const session of this.#activeSessions.values()) {
-      session.streamActive = true;
-      fetches.push(this.#runStream(session, question).catch((err) => err));
+    for (const pipeline of this.#activeSessions.values()) {
+      fetches.push(
+        pipeline.startStream(this.#systemPrompt, question).catch((err) => err)
+      );
     }
 
     await Promise.all(fetches);
     this.#allStreamsDone = true;
 
     // All streams done — check if TTS is still playing
-    if (this.#anyTtsActive()) {
+    if ([...this.#activeSessions.values()].some((p) => p.isActive)) {
       this.#setState("Speaking");
     } else {
       this.#finishSession();
@@ -138,12 +132,10 @@ export class Orchestrator {
 
     const textFeeds = [];
     for (const modelData of sessionData.models) {
-      const session = this.#activeSessions.get(modelData.name);
-      if (!session) continue;
+      const pipeline = this.#activeSessions.get(modelData.name);
+      if (!pipeline) continue;
       const fullText = modelData.reasoningText || "";
-      textFeeds.push(this.#replayText(session, fullText).then(() => {
-        session.streamActive = false;
-      }));
+      textFeeds.push(pipeline.drainText(fullText));
     }
 
     await Promise.all(textFeeds);
@@ -151,7 +143,7 @@ export class Orchestrator {
     this.#allStreamsDone = true;
 
     // Check if TTS is still playing
-    if (this.#anyTtsActive()) {
+    if ([...this.#activeSessions.values()].some((p) => p.isActive)) {
       this.#setState("Speaking");
     } else {
       this.#finishSession();
@@ -160,31 +152,19 @@ export class Orchestrator {
 
   #setupPipelines(modelsToUse) {
     const models = modelsToUse || this.#models;
+    let index = 0;
     for (const model of models) {
       const column = this.#columns.get(model.name);
       if (!column) continue;
       column.clear();
 
-      const channel = this.#audioGraph.createChannel(model.pan);
-      this.#onChannelCreated?.(model.name, channel);
-
-      const session = {
+      const pipeline = new ChannelPipeline({
         model,
+        ttsConfig: this.#ttsConfig,
         column,
-        channel,
-        streamActive: false,
-        ttsActive: false,
-        contentHit: false,
-        reasoningText: "",
-      };
-
-      session.queue = new TTSPlaybackQueue({
         ttsEngine: this.#ttsEngine,
-        channel,
-        voice: model.voice,
-        sentenceGapMs: 200,
+        audioGraph: this.#audioGraph,
         onIdle: () => {
-          session.ttsActive = false;
           if (this.#mode === "monologue") {
             this.#advanceMonologue();
           }
@@ -192,24 +172,14 @@ export class Orchestrator {
         },
       });
 
+      pipeline.createChannel();
+
       // In Monologue mode, pause all queues except the first
-      if (this.#mode === "monologue") {
-        const sessionIndex = [...this.#activeSessions.keys()].indexOf(model.name);
-        if (sessionIndex > 0) {
-          session.queue.pause();
-        }
+      if (this.#mode === "monologue" && index > 0) {
+        pipeline.pause();
       }
 
-      session.buffer = new SentenceBuffer({
-        maxTokens: this.#ttsConfig.maxTokens,
-        timeoutTokens: this.#ttsConfig.sentenceTimeoutTokens,
-        onSentence: (text) => {
-          session.ttsActive = true;
-          session.queue.enqueue(text);
-        },
-      });
-
-      this.#activeSessions.set(model.name, session);
+      this.#activeSessions.set(model.name, pipeline);
 
       // Initialize model data for session storage (skip if already present, e.g. replay)
       if (!this.#sessionData.models.some((m) => m.name === model.name)) {
@@ -222,73 +192,9 @@ export class Orchestrator {
           reasoningText: "",
         });
       }
+
+      index++;
     }
-  }
-
-  async #runStream(session, question) {
-    const { model, column, buffer } = session;
-    const abortController = new AbortController();
-    this.#abortControllers.set(model.name, abortController);
-
-    try {
-      const stream = await streamCompletion(
-        model.url,
-        model.model,
-        this.#systemPrompt,
-        question,
-        abortController.signal
-      );
-
-      await parseStream(stream, {
-        onReasoningToken: (token) => {
-          column.appendToken(token);
-          session.reasoningText += token;
-          if (!session.contentHit && !buffer.isCapped) {
-            buffer.feed(token);
-          }
-        },
-        onContentStart: () => {
-          session.contentHit = true;
-          buffer.flush();
-        },
-        onDone: () => {
-          session.streamActive = false;
-          if (!session.contentHit) {
-            buffer.flush();
-          }
-          this.#checkAllDone();
-        },
-      });
-    } catch (err) {
-      if (err.name === "AbortError") return;
-      column.setError(`Error: ${err.message}`);
-      session.streamActive = false;
-      this.#checkAllDone();
-    } finally {
-      this.#abortControllers.delete(model.name);
-    }
-  }
-
-  async #replayText(session, text) {
-    const { column, buffer } = session;
-    session.reasoningText = text;
-
-    // Feed text character by character with small delay for visual effect
-    const chunkSize = 3;
-    for (let i = 0; i < text.length; i += chunkSize) {
-      const chunk = text.slice(i, i + chunkSize);
-      column.appendToken(chunk);
-      if (!buffer.isCapped) {
-        buffer.feed(chunk);
-      }
-      // Small delay for visual streaming effect
-      if (i % 30 === 0) {
-        await new Promise((r) => setTimeout(r, 16));
-      }
-    }
-
-    // Flush any remaining buffer content
-    buffer.flush();
   }
 
   #advanceMonologue() {
@@ -296,38 +202,32 @@ export class Orchestrator {
     const sessionKeys = [...this.#activeSessions.keys()];
     this.#monologueIndex++;
     if (this.#monologueIndex < sessionKeys.length) {
-      const nextSession = this.#activeSessions.get(sessionKeys[this.#monologueIndex]);
-      if (nextSession) {
-        nextSession.ttsActive = true;
-        nextSession.queue.resume();
+      const nextPipeline = this.#activeSessions.get(sessionKeys[this.#monologueIndex]);
+      if (nextPipeline) {
+        nextPipeline.resume();
       }
     }
-  }
-
-  #anyTtsActive() {
-    return [...this.#activeSessions.values()].some((s) => s.ttsActive);
   }
 
   #checkAllDone() {
     if (this.#state === "Done") return;
 
-    // In Monologue mode, only consider done when the last model's TTS finishes
+    // In Monologue mode, only consider done when the last model's pipeline finishes
     if (this.#mode === "monologue") {
       const sessionKeys = [...this.#activeSessions.keys()];
       const lastModel = sessionKeys[sessionKeys.length - 1];
-      const lastSession = this.#activeSessions.get(lastModel);
-      if (this.#allStreamsDone && lastSession && !lastSession.ttsActive) {
+      const lastPipeline = this.#activeSessions.get(lastModel);
+      if (this.#allStreamsDone && lastPipeline && !lastPipeline.isActive) {
         this.#finishSession();
       }
       return;
     }
 
-    // Chorus mode: done when all streams done and all TTS idle
-    const allStreamsDone = [...this.#activeSessions.values()].every(
-      (s) => !s.streamActive
-    );
+    // Chorus mode: done when all streams done and all pipelines idle
+    const allDone = this.#allStreamsDone &&
+      [...this.#activeSessions.values()].every((p) => !p.isActive);
 
-    if (allStreamsDone && !this.#anyTtsActive()) {
+    if (allDone) {
       if (this.#state === "Thinking" || this.#state === "Speaking") {
         this.#finishSession();
       }
@@ -335,11 +235,11 @@ export class Orchestrator {
   }
 
   #finishSession() {
-    // Update stored reasoning text from session state
-    for (const [name, session] of this.#activeSessions) {
+    // Update stored reasoning text from pipeline state
+    for (const [name, pipeline] of this.#activeSessions) {
       const modelData = this.#sessionData.models.find((m) => m.name === name);
       if (modelData) {
-        modelData.reasoningText = session.reasoningText;
+        modelData.reasoningText = pipeline.reasoningText;
       }
     }
 
@@ -359,12 +259,8 @@ export class Orchestrator {
 
   /** Soft stop: abort LLM streams, finish current TTS sentence, then silence. */
   stop() {
-    for (const controller of this.#abortControllers.values()) {
-      controller.abort();
-    }
-    this.#abortControllers.clear();
-    for (const session of this.#activeSessions.values()) {
-      session.queue.stop();
+    for (const pipeline of this.#activeSessions.values()) {
+      pipeline.softStop();
     }
     this.#setState("Done");
   }

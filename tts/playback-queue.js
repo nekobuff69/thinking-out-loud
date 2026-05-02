@@ -4,6 +4,15 @@
  *
  * Fires `onIdle` when the queue is empty and nothing is playing.
  */
+const State = Object.freeze({
+  Idle: "Idle",
+  Synthesizing: "Synthesizing",
+  Playing: "Playing",
+  Gapping: "Gapping",
+  Paused: "Paused",
+  Stopped: "Stopped",
+});
+
 export class TTSPlaybackQueue {
   #ttsEngine;
   #channel;
@@ -11,11 +20,11 @@ export class TTSPlaybackQueue {
   #sentenceGapMs;
   #onIdle;
   #queue = [];
-  #playing = false;
-  #stopped = false;
-  #softStopping = false;
-  #paused = false;
+  #state = State.Idle;
+  #previousState = null;
+  #softStopRequested = false;
   #sentenceTimeout = null;
+  #processing = false;
 
   constructor({ ttsEngine, channel, voice, sentenceGapMs = 200, onIdle }) {
     this.#ttsEngine = ttsEngine;
@@ -27,145 +36,182 @@ export class TTSPlaybackQueue {
 
   /** Enqueue a sentence for synthesis and playback. */
   enqueue(text) {
-    if (this.#stopped) return;
+    if (this.#state === State.Stopped) return;
     this.#queue.push(text);
-    // Only autoplay if not paused
-    if (!this.#playing && !this.#paused) {
+    if (this.#state === State.Idle) {
       this.#playNext();
     }
   }
 
   /** Pause: stop processing new sentences (queued items are held). */
   pause() {
-    this.#paused = true;
+    if (this.#state === State.Stopped || this.#state === State.Paused) return;
+    this.#previousState = this.#state;
     if (this.#sentenceTimeout) {
       clearTimeout(this.#sentenceTimeout);
       this.#sentenceTimeout = null;
     }
+    this.#state = State.Paused;
   }
 
   /** Resume: start processing the queue if items are waiting. */
   resume() {
-    this.#paused = false;
-    if (!this.#playing && this.#queue.length > 0 && !this.#stopped) {
-      this.#playNext();
+    if (this.#state !== State.Paused) return;
+    const prev = this.#previousState;
+    this.#previousState = null;
+
+    if (this.#queue.length === 0 && prev !== State.Gapping) {
+      this.#state = State.Idle;
+      return;
     }
+
+    if (prev === State.Gapping) {
+      this.#state = State.Gapping;
+      this.#sentenceTimeout = setTimeout(() => {
+        this.#sentenceTimeout = null;
+        if (this.#state === State.Gapping) {
+          this.#playNext();
+        }
+      }, this.#sentenceGapMs);
+      return;
+    }
+
+    this.#state = State.Synthesizing;
+    this.#playNext();
   }
 
   /** Stop gracefully: let current sentence finish playing, discard the rest. */
   stop() {
-    this.#softStopping = true;
+    if (this.#state === State.Stopped) return;
+    this.#softStopRequested = true;
     this.#queue = [];
-    // Cancel the inter-sentence gap timeout so we don't start the next one
     if (this.#sentenceTimeout) {
       clearTimeout(this.#sentenceTimeout);
       this.#sentenceTimeout = null;
     }
-    // If nothing is currently playing, resolve immediately
-    if (!this.#playing) {
-      this.#stopped = true;
-      this.#onIdle?.();
+    if (this.#state === State.Playing || this.#state === State.Synthesizing) {
+      // Let the in-flight sentence finish playing, then Stopped.
+      return;
     }
+    this.#state = State.Stopped;
+    this.#onIdle?.();
   }
 
   /** Whether the queue has any pending or in-flight work. */
   get isActive() {
-    return this.#playing || this.#queue.length > 0;
+    return (
+      this.#state === State.Synthesizing ||
+      this.#state === State.Playing ||
+      this.#state === State.Gapping ||
+      this.#queue.length > 0
+    );
   }
 
   /** Whether the queue is currently paused. */
   get isPaused() {
-    return this.#paused;
+    return this.#state === State.Paused;
   }
 
   async #playNext() {
-    if (this.#queue.length === 0) {
-      this.#playing = false;
-      // If soft-stopping and queue is empty, we're done
-      if (this.#softStopping) {
-        this.#stopped = true;
-        this.#onIdle?.();
+    if (this.#processing) return;
+    this.#processing = true;
+
+    try {
+      while (true) {
+        if (this.#state === State.Stopped || this.#state === State.Paused) {
+          return;
+        }
+
+        if (this.#queue.length === 0) {
+          if (this.#softStopRequested) {
+            this.#state = State.Stopped;
+            this.#onIdle?.();
+            return;
+          }
+          if (this.#state !== State.Idle) {
+            this.#state = State.Idle;
+            this.#onIdle?.();
+          }
+          return;
+        }
+
+        if (this.#softStopRequested) {
+          this.#state = State.Stopped;
+          this.#onIdle?.();
+          return;
+        }
+
+        const text = this.#queue.shift();
+
+        // Synthesize
+        let buffer;
+        try {
+          this.#state = State.Synthesizing;
+          buffer = await this.#ttsEngine.synthesize(text, this.#voice);
+        } catch (err) {
+          console.error(`TTS synthesis failed: ${err.message}`);
+          if (this.#state === State.Paused) {
+            this.#queue.unshift(text);
+            return;
+          }
+          if (this.#state === State.Stopped) {
+            this.#state = State.Idle;
+            this.#onIdle?.();
+            return;
+          }
+          continue;
+        }
+
+        if (this.#state === State.Stopped) {
+          this.#state = State.Idle;
+          this.#onIdle?.();
+          return;
+        }
+
+        if (this.#state === State.Paused && !this.#softStopRequested) {
+          this.#queue.unshift(text);
+          return;
+        }
+
+        // Play through the channel (soft-stop lets the current sentence finish)
+        this.#state = State.Playing;
+        await this.#playBuffer(buffer);
+
+        if (this.#state === State.Stopped) {
+          this.#onIdle?.();
+          return;
+        }
+
+        if (this.#softStopRequested) {
+          this.#state = State.Stopped;
+          this.#onIdle?.();
+          return;
+        }
+
+        if (this.#state === State.Paused) {
+          this.#queue.unshift(text);
+          return;
+        }
+
+        // Next sentence or gap
+        if (this.#queue.length === 0) {
+          this.#state = State.Idle;
+          this.#onIdle?.();
+          return;
+        }
+
+        this.#state = State.Gapping;
+        this.#sentenceTimeout = setTimeout(() => {
+          this.#sentenceTimeout = null;
+          if (this.#state === State.Gapping) {
+            this.#playNext();
+          }
+        }, this.#sentenceGapMs);
         return;
       }
-      if (!this.#paused) this.#onIdle?.();
-      return;
+    } finally {
+      this.#processing = false;
     }
-
-    this.#playing = true;
-    const text = this.#queue.shift();
-
-    if (this.#stopped || this.#paused) {
-      if (this.#paused && !this.#stopped) {
-        this.#queue.unshift(text);
-      }
-      this.#playing = false;
-      if (!this.#paused) this.#onIdle?.();
-      return;
-    }
-
-    // If soft-stopping, don't start new sentences —
-    // but if we're mid-synthesis let it finish playing
-    if (this.#softStopping) {
-      this.#queue = [];
-      this.#playing = false;
-      this.#stopped = true;
-      this.#onIdle?.();
-      return;
-    }
-
-    // Synthesize
-    let buffer;
-    try {
-      buffer = await this.#ttsEngine.synthesize(text, this.#voice);
-    } catch (err) {
-      console.error(`TTS synthesis failed: ${err.message}`);
-      // Skip this sentence and move on — don't deadlock the session
-      this.#playing = false;
-      if (!this.#paused && !this.#stopped) {
-        this.#playNext();
-      } else if (!this.#paused) {
-        this.#onIdle?.();
-      }
-      return;
-    }
-
-    // If soft-stopped or hard-stopped during synthesis, play the buffer anyway
-    // (soft-stop lets the current sentence finish), then stop.
-    if (this.#stopped) {
-      this.#playing = false;
-      this.#onIdle?.();
-      return;
-    }
-    if (this.#paused && !this.#softStopping) {
-      this.#queue.unshift(text);
-      this.#playing = false;
-      return;
-    }
-
-    // Play through the channel (always plays even if softStopping)
-    await this.#playBuffer(buffer);
-
-    // After playback, if soft-stopping, transition to fully stopped
-    if (this.#softStopping) {
-      this.#playing = false;
-      this.#stopped = true;
-      this.#onIdle?.();
-      return;
-    }
-    if (this.#stopped || this.#paused) {
-      if (this.#paused && !this.#stopped) {
-        this.#queue.unshift(text);
-      }
-      this.#playing = false;
-      if (!this.#paused) this.#onIdle?.();
-      return;
-    }
-
-    // 200ms gap before next sentence
-    this.#sentenceTimeout = setTimeout(() => {
-      this.#sentenceTimeout = null;
-      this.#playNext();
-    }, this.#sentenceGapMs);
   }
 
   #playBuffer(buffer) {
