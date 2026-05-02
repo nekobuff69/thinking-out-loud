@@ -1,11 +1,13 @@
 /**
  * Sends a streaming chat completion request to an OpenAI-compatible endpoint.
  * Returns the response ReadableStream for consumption by StreamParser.
+ * @param {AbortSignal} [signal] - optional abort signal for cancellation
  */
-export async function streamCompletion(baseUrl, model, systemPrompt, question) {
+export async function streamCompletion(baseUrl, model, systemPrompt, question, signal) {
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal,
     body: JSON.stringify({
       model,
       messages: [

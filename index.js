@@ -60,6 +60,7 @@ historyBtn.addEventListener("click", () => {
 
 // --- Audio + TTS ---
 const audioGraph = new AudioGraph();
+audioGraph.enableTabResume();
 const ttsEngine = new KokoroBackend(config.tts.model);
 
 // --- Orchestrator ---
@@ -82,19 +83,24 @@ const orchestrator = new Orchestrator({
 
 orchestrator.onStateChange((state) => {
   stateLabel.textContent = state;
+  stateLabel.style.color = state.startsWith("Error") ? "#ff4444" : "#555";
 
-  if (state === "Loading" || state === "Thinking" || state === "Speaking") {
+  if (state === "Loading" || state === "Checking" || state === "Thinking" || state === "Speaking") {
     promptSelector.setEnabled(false);
     modeToggle.setEnabled(false);
     historyBtn.disabled = true;
-    stopBtn.style.display = "inline-block";
+    stopBtn.style.display = (state === "Thinking" || state === "Speaking") ? "inline-block" : "none";
   }
 
-  if (state === "Done") {
+  if (state === "Done" || state.startsWith("Error")) {
     promptSelector.setEnabled(true);
     modeToggle.setEnabled(true);
     historyBtn.disabled = false;
     stopBtn.style.display = "none";
+    if (state.startsWith("Error")) {
+      // Reset to idle via stop() so user can try again
+      setTimeout(() => orchestrator.stop(), 3000);
+    }
     // Refresh recent questions
     promptSelector.updateRecentQuestions(store.getQuestions());
   }

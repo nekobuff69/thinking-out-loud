@@ -1,5 +1,6 @@
 import { streamCompletion } from "../llm/lm-studio-client.js";
 import { parseStream } from "../llm/stream-parser.js";
+import { healthCheck } from "../llm/health-check.js";
 import { SentenceBuffer } from "../tts/sentence-buffer.js";
 import { TTSPlaybackQueue } from "../tts/playback-queue.js";
 
@@ -25,6 +26,7 @@ export class Orchestrator {
   #storage;
   #sessionData = null;
   #questionText = "";
+  #abortControllers = new Map();
 
   constructor({ models, systemPrompt, ttsConfig, audioGraph, columns, ttsEngine, onChannelCreated, storage }) {
     this.#models = models;
@@ -51,6 +53,7 @@ export class Orchestrator {
     this.#questionText = question;
     this.#monologueIndex = 0;
     this.#allStreamsDone = false;
+    this.#abortControllers.clear();
     this.#setState("Loading");
 
     await this.#ttsEngine.load();
@@ -63,7 +66,33 @@ export class Orchestrator {
       models: [],
     };
 
-    this.#setupPipelines();
+    // Health check all models concurrently
+    this.#setState("Checking");
+    const healthResults = await Promise.all(
+      this.#models.map(async (m) => ({ model: m, ok: await healthCheck(m.url) }))
+    );
+
+    const reachableModels = healthResults.filter((r) => r.ok).map((r) => r.model);
+    const unreachableModels = healthResults.filter((r) => !r.ok).map((r) => r.model);
+
+    // If all models unreachable — blocking error
+    if (reachableModels.length === 0) {
+      for (const model of this.#models) {
+        const column = this.#columns.get(model.name);
+        column?.setError(`${model.name} — unavailable`);
+      }
+      this.#setState("Error: No LLM providers reachable");
+      return;
+    }
+
+    // Mark unreachable model columns with error
+    for (const model of unreachableModels) {
+      const column = this.#columns.get(model.name);
+      column?.setError(`${model.name} — unavailable`);
+    }
+
+    // Set up pipelines only for reachable models
+    this.#setupPipelines(reachableModels);
 
     // Fire all 3 LLM streams concurrently
     this.#setState("Thinking");
@@ -124,8 +153,9 @@ export class Orchestrator {
     }
   }
 
-  #setupPipelines() {
-    for (const model of this.#models) {
+  #setupPipelines(modelsToUse) {
+    const models = modelsToUse || this.#models;
+    for (const model of models) {
       const column = this.#columns.get(model.name);
       if (!column) continue;
       column.clear();
@@ -190,13 +220,16 @@ export class Orchestrator {
 
   async #runStream(session, question) {
     const { model, column, buffer } = session;
+    const abortController = new AbortController();
+    this.#abortControllers.set(model.name, abortController);
 
     try {
       const stream = await streamCompletion(
         model.url,
         model.model,
         this.#systemPrompt,
-        question
+        question,
+        abortController.signal
       );
 
       await parseStream(stream, {
@@ -220,9 +253,12 @@ export class Orchestrator {
         },
       });
     } catch (err) {
+      if (err.name === "AbortError") return;
       column.setError(`Error: ${err.message}`);
       session.streamActive = false;
       this.#checkAllDone();
+    } finally {
+      this.#abortControllers.delete(model.name);
     }
   }
 
@@ -312,8 +348,12 @@ export class Orchestrator {
     this.#onStateChange?.(newState);
   }
 
-  /** Soft stop: finish current TTS sentences, then abort. */
+  /** Soft stop: abort LLM streams, finish current TTS sentence, then silence. */
   stop() {
+    for (const controller of this.#abortControllers.values()) {
+      controller.abort();
+    }
+    this.#abortControllers.clear();
     for (const session of this.#activeSessions.values()) {
       session.queue.stop();
     }

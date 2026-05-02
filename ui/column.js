@@ -77,8 +77,8 @@ export function createColumn(container, model) {
   }
 
   function setError(message) {
-    reasoningEl.textContent = message;
-    reasoningEl.style.color = "#ff4444";
+    reasoningEl.innerHTML = `<span class="error-msg">${message}</span>`;
+    reasoningEl.style.color = "";
   }
 
   return {

@@ -7,6 +7,7 @@ export class AudioGraph {
   #ctx = null;
   #channels = [];
   #activeCount = 0;
+  #visibilityHandler = null;
 
   /** Lazily create or return the existing AudioContext. */
   getContext() {
@@ -85,5 +86,18 @@ export class AudioGraph {
       this.#ctx.close();
       this.#ctx = null;
     }
+    if (this.#visibilityHandler) {
+      document.removeEventListener("visibilitychange", this.#visibilityHandler);
+    }
+  }
+
+  /** Set up tab visibility handling to keep AudioContext alive. */
+  enableTabResume() {
+    this.#visibilityHandler = () => {
+      if (document.visibilityState === "visible" && this.#ctx?.state === "suspended") {
+        this.#ctx.resume();
+      }
+    };
+    document.addEventListener("visibilitychange", this.#visibilityHandler);
   }
 }
