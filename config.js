@@ -58,10 +58,10 @@ export const config = {
       pan: 0.0,
     },
     {
-      name: "Mistral",
+      name: "GPT-OSS",
       provider: "lm-studio",
       url: "http://localhost:1234/v1",
-      model: "mistral-small-24b",
+      model: "gpt-oss-20b",
       voice: "bm_lewis",
       color: "#44aaff",
       pan: 0.7,
@@ -69,7 +69,7 @@ export const config = {
   ],
 
   tts: {
-    model: "onnx-community/Kokoro-82M-ONNX",
+    model: "onnx-community/Kokoro-82M-v1.0-ONNX",
     maxTokens: 200,
     sentenceTimeoutTokens: 30,
   },

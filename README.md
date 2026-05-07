@@ -9,7 +9,7 @@ Ask questions and hear multiple LLMs reason out loud, with TTS voice synthesis.
 - **CORS:** The browser app (Vite dev on port 5173) fetches from the LLM provider on a different port, so the provider **must serve CORS headers**.
   - **LM Studio:** CORS is enabled by default in recent versions. If requests are blocked, relaunch with `--cors` or enable "Serve on Local Network" in Settings.
   - **Other providers (Ollama, etc.):** configure the server to include `Access-Control-Allow-Origin: *` or a matching origin.
-- **First run:** the TTS model (~21MB ONNX WASM) downloads into the browser's IndexedDB cache. Subsequent loads are instant.
+- **First run:** the TTS model (~21MB quantized ONNX) downloads into the browser's IndexedDB cache. Subsequent loads are instant.
 
 The provider URLs are configured in `config.js` — edit the `url` field in each model entry to point at your local server.
 
@@ -42,7 +42,7 @@ npm run preview
 - `ui/` — UI components (prompt selector, mode toggle, columns, history) + per-component CSS
 - `styles/` — Global CSS (reset, variables, spinner animation) and top-bar CSS
 - `audio/` — Audio graph (Web Audio API) and waveform visualization (canvas)
-- `tts/` — Text-to-speech engine (Kokoro backend via Transformers.js)
+- `tts/` — Text-to-speech engine (Kokoro backend via kokoro-js)
 - `llm/` — LLM streaming (SSE) and provider health checks
 - `session/` — Orchestrator, channel pipeline, storage (localStorage + adapter seam)
 - `test/` — Node test runner suites (15 tests, 5 suites)

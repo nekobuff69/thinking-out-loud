@@ -13,6 +13,13 @@ describe("Orchestrator", () => {
     };
     const mockAudioGraph = {
       clearChannels: () => {},
+      createChannel: () => ({
+        play: () => {},
+        analyser: {},
+        gain: {},
+        stopAll: () => {},
+      }),
+      getContext: () => undefined,
     };
     const mockColumn = {
       appendToken: () => {},

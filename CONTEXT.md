@@ -4,14 +4,14 @@
 
 ## Purpose
 
-"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three local LLMs (Qwen, Nemotron, Mistral) stream their internal reasoning tokens simultaneously. Each model's reasoning is synthesized to speech in a distinct voice, spatially panned across stereo channels, with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
+"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three local LLMs (Qwen, Nemotron, GPT-OSS) stream their internal reasoning tokens simultaneously. Each model's reasoning is synthesized to speech in a distinct voice, spatially panned across stereo channels, with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
 
 ## Tech Stack
 
 - **Runtime:** Browser (ES modules)
 - **Build:** Vite dev server + production bundler
 - **LLM Inference:** OpenAI-compatible local providers (LM Studio, etc.) via `fetch()` + SSE
-- **TTS:** Kokoro-82M-ONNX via Transformers.js (WebGPU/WebGL quantized)
+- **TTS:** Kokoro-82M via `kokoro-js` (official wrapper around `StyleTextToSpeech2Model`, quantized ONNX in browser IndexedDB)
 - **Audio:** Web Audio API (AudioContext, GainNode, StereoPannerNode, AnalyserNode)
 - **Storage:** localStorage with adapter seam (in-memory for tests)
 - **Styling:** Separate CSS files in `styles/` and `ui/`, imported as ES modules
@@ -42,7 +42,7 @@ index.html ──► index.js (bootstraps everything)
 │  └── session/memory-storage-adapter.js  Test adapter        │
 ├─────────────────────────────────────────────────────────────┤
 │  TTS Layer (text → audio synthesis + playback)              │
-│  ├── tts/kokoro-backend.js    Transformers.js pipeline      │
+│  ├── tts/kokoro-backend.js    kokoro-js (StyleTextToSpeech2)│
 │  ├── tts/tts-engine.js        Abstract interface            │
 │  ├── tts/sentence-buffer.js   Token → sentence boundaries   │
 │  └── tts/playback-queue.js    Sentence → audio queue        │
@@ -221,7 +221,7 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `session/storage.js` | Session persistence with adapter seam | Deep |
 | `session/local-storage-adapter.js` | localStorage wrapper | Shallow |
 | `session/memory-storage-adapter.js` | In-memory adapter for tests | Shallow |
-| `tts/kokoro-backend.js` | Transformers.js TTS pipeline + resampling | Deep |
+| `tts/kokoro-backend.js` | kokoro-js TTS backend (StyleTextToSpeech2Model + resampling) | Deep |
 | `tts/tts-engine.js` | Abstract TTS interface | Shallow (interface) |
 | `tts/sentence-buffer.js` | Token accumulation + boundary detection | Deep |
 | `tts/playback-queue.js` | TTS state machine (6 explicit states) | Deep |

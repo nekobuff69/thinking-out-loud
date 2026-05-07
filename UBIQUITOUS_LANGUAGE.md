@@ -40,7 +40,7 @@
 | Term | Definition | Aliases to avoid |
 |---|---|---|
 | **TTS** | Text-to-speech: the browser-side synthesis that converts reasoning text into spoken audio | Speech synthesis, voice synthesis, audio generation |
-| **TTS model** | The speech synthesis model loaded in the browser (e.g. Kokoro) | Speech engine, voice model, synthesis backend |
+| **TTS model** | The speech synthesis model loaded in the browser — Kokoro-82M via kokoro-js (`StyleTextToSpeech2Model`, ONNX in IndexedDB) | Speech engine, voice model, synthesis backend |
 | **Voice** | A distinct speaker identity within a TTS model, assigned to one model | Speaker, persona, voice preset, timbre |
 | **Sentence buffer** | Accumulated reasoning tokens waiting for a sentence boundary before TTS synthesis | Token queue, text buffer, pending text |
 | **Sentence boundary** | Punctuation (`.`, `!`, `?`, `;`, newline) that triggers TTS synthesis of the buffered text | Break point, flush trigger, end-of-sentence |

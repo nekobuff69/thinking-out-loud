@@ -1,25 +1,27 @@
 import { TTSEngine } from "./tts-engine.js";
-import { pipeline } from "@huggingface/transformers";
+import { KokoroTTS } from "kokoro-js";
 
 /**
- * Kokoro TTS backend via Transformers.js.
+ * Kokoro TTS backend via the official kokoro-js library.
+ * Uses StyleTextToSpeech2Model directly (bypasses the broken
+ * transformers.js pipeline auto-detection for this model type).
  * Lazy-loads the model on first use; browser caches it in IndexedDB.
  */
 export class KokoroBackend extends TTSEngine {
-  /** @type {string} */
-  #modelId;
-  /** @type {any} */
-  #pipeline = null;
+  /** @type {KokoroTTS | null} */
+  #tts = null;
   /** @type {Promise<void> | null} */
   #loadPromise = null;
   /** @type {import("../audio/audio-graph.js").AudioGraph | null} */
   #audioGraph = null;
+  /** @type {string} */
+  #modelId;
 
   /**
-   * @param {string} [modelId]
+   * @param {string} [modelId] - HF model repo ID. Defaults to the official v1.0 ONNX build.
    * @param {import("../audio/audio-graph.js").AudioGraph | null} [audioGraph]
    */
-  constructor(modelId = "onnx-community/Kokoro-82M-ONNX", audioGraph = null) {
+  constructor(modelId = "onnx-community/Kokoro-82M-v1.0-ONNX", audioGraph = null) {
     super();
     this.#modelId = modelId;
     this.#audioGraph = audioGraph;
@@ -29,8 +31,7 @@ export class KokoroBackend extends TTSEngine {
    * @returns {Promise<void>}
    */
   async load() {
-    if (this.#pipeline) return;
-    // Coalesce concurrent load() calls into a single pipeline initialization
+    if (this.#tts) return;
     if (!this.#loadPromise) {
       this.#loadPromise = this.#doLoad();
     }
@@ -39,7 +40,7 @@ export class KokoroBackend extends TTSEngine {
 
   async #doLoad() {
     try {
-      this.#pipeline = await pipeline("text-to-speech", this.#modelId, {
+      this.#tts = await KokoroTTS.from_pretrained(this.#modelId, {
         dtype: "q8", // quantized for faster load
       });
     } catch (err) {
@@ -54,16 +55,13 @@ export class KokoroBackend extends TTSEngine {
    * @returns {Promise<AudioBuffer>}
    */
   async synthesize(text, voice) {
-    if (!this.#pipeline) {
+    if (!this.#tts) {
       await this.load();
     }
 
-    const result = await this.#pipeline(text, {
-      speaker: voice,
-    });
-
-    // result is { audio: Float32Array, sampling_rate: number }
-    return await this.#toAudioBuffer(result.audio, result.sampling_rate);
+    // KokoroTTS.generate returns RawAudio { audio: Float32Array, sampling_rate: 24000 }
+    const raw = await /** @type {import("kokoro-js").KokoroTTS} */ (this.#tts).generate(text, { voice: /** @type {any} */ (voice) });
+    return this.#toAudioBuffer(raw.audio, raw.sampling_rate);
   }
 
   /**
@@ -72,13 +70,8 @@ export class KokoroBackend extends TTSEngine {
    * @returns {AudioBuffer | Promise<AudioBuffer>}
    */
   #toAudioBuffer(float32Array, sourceSampleRate) {
-    // Use the shared AudioContext so buffers match its sample rate.
-    // If the model outputs at a different rate, we resample by creating
-    // an OfflineAudioContext at the source rate, rendering there, then
-    // re-rendering at the target rate.
     const ctx = this.#audioGraph?.getContext();
     if (!ctx) {
-      // Fallback: create buffer at source rate (no resampling)
       const offline = new OfflineAudioContext(1, float32Array.length, sourceSampleRate);
       const buffer = offline.createBuffer(1, float32Array.length, sourceSampleRate);
       buffer.getChannelData(0).set(float32Array);
@@ -87,14 +80,12 @@ export class KokoroBackend extends TTSEngine {
 
     const targetRate = ctx.sampleRate;
     if (targetRate === sourceSampleRate) {
-      // No resampling needed — create directly on the shared context
       const buffer = ctx.createBuffer(1, float32Array.length, sourceSampleRate);
       buffer.getChannelData(0).set(float32Array);
       return buffer;
     }
 
-    // Resample: render at source rate via OfflineAudioContext, then
-    // decode into the target rate using startRendering()
+    // Resample via OfflineAudioContext
     const frameCount = Math.ceil(float32Array.length * targetRate / sourceSampleRate);
     const offline = new OfflineAudioContext(1, frameCount, targetRate);
     const srcBuffer = offline.createBuffer(1, float32Array.length, sourceSampleRate);
@@ -103,7 +94,6 @@ export class KokoroBackend extends TTSEngine {
     src.buffer = srcBuffer;
     src.connect(offline.destination);
     src.start();
-    // This is async but synthesize() is already async so that's fine
     return offline.startRendering();
   }
 
@@ -111,6 +101,6 @@ export class KokoroBackend extends TTSEngine {
    * @returns {void}
    */
   destroy() {
-    this.#pipeline = null;
+    this.#tts = null;
   }
 }
