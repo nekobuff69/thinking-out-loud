@@ -5,13 +5,12 @@
   "license": "ISC",
   "author": "nekobuff69",
   "type": "module",
-  "main": "getCompletion.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --experimental-test-module-mocks --test test/*.test.js"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",

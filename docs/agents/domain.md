@@ -4,7 +4,8 @@ How the engineering skills should consume this repo's domain documentation when 
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root
+- **`CONTEXT.md`** at the repo root — module map, data flow, key interfaces
+- **`UBIQUITOUS_LANGUAGE.md`** at the repo root — domain glossary, term definitions
 - **`docs/adr/`** — read ADRs that touch the area you're about to work in
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The producer skill (`/grill-with-docs`) creates them lazily when terms or decisions actually get resolved.
@@ -16,10 +17,20 @@ Single-context repo:
 ```
 /
 ├── CONTEXT.md
+├── UBIQUITOUS_LANGUAGE.md
+├── README.md
+├── index.html
+├── index.js
+├── config.js
 ├── docs/adr/
-│   ├── 0001-event-sourced-orders.md
-│   └── 0002-postgres-for-write-model.md
-└── src/
+│   └── 001-deepen-module-architecture.md
+├── ui/          (prompt-selector, mode-toggle, column, history + CSS)
+├── session/     (orchestrator, channel-pipeline, storage + adapters)
+├── tts/         (kokoro-backend, tts-engine, sentence-buffer, playback-queue)
+├── audio/       (audio-graph, waveform)
+├── llm/         (llm-stream, health-check)
+├── styles/      (global.css, top-bar.css)
+└── test/        (5 suites, 15 tests)
 ```
 
 ## Use the glossary's vocabulary

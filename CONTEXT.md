@@ -8,12 +8,13 @@
 
 ## Tech Stack
 
-- **Runtime:** Browser (ES modules, no bundler)
+- **Runtime:** Browser (ES modules)
+- **Build:** Vite dev server + production bundler
 - **LLM Inference:** OpenAI-compatible local providers (LM Studio, etc.) via `fetch()` + SSE
 - **TTS:** Kokoro-82M-ONNX via Transformers.js (WebGPU/WebGL quantized)
 - **Audio:** Web Audio API (AudioContext, GainNode, StereoPannerNode, AnalyserNode)
 - **Storage:** localStorage with adapter seam (in-memory for tests)
-- **Styling:** Inline CSS in `index.html` (single-file, no build step)
+- **Styling:** Separate CSS files in `styles/` and `ui/`, imported as ES modules
 
 ## Module Map
 
@@ -185,29 +186,36 @@ new AudioGraph()
 Managed by Orchestrator. All state transitions flow through `orchestrator.onStateChange()`.
 
 ```
-Idle ──► Loading ──► Checking ──► Thinking ──► Speaking ──► Done
+Idle ──► Loading ──► Checking ──► Thinking ──► Speaking ──► Done ──► Idle
   │         │           │             │            │
-  │         │           │             │            └─► (save to SessionStore)
+  │         │           │             │            └─► (save to SessionStore, reset)
   │         │           │             │
   │         │           │             └─► (all streams ended, TTS still playing)
   │         │           │
   │         │           └─► (health-check providers)
   │         │
-  │         └─► (download TTS model)
+  │         └─► (download TTS model, show spinner)
   │
-  └─── Stop ──► (soft stop: abort streams, finish current TTS, silence)
+  └─── Stop ──► Done ──► Idle (soft stop: abort streams, finish current TTS, silence)
 ```
 
 ## File Inventory
 
 | File | Responsibility | Depth |
 |---|---|---|
-| `index.js` | Bootstrap: wire UI → Orchestrator → AudioGraph | Shallow (wiring) |
+| `index.html` | Root HTML + loading spinner element | Shallow (markup) |
+| `index.js` | Bootstrap: wire UI → Orchestrator → AudioGraph, loading spinner | Shallow (wiring) |
 | `config.js` | Static config: models, prompts, TTS params | Shallow (data) |
-| `ui/prompt-selector.js` | Curated cards + free-text + Ask button | Deep |
-| `ui/mode-toggle.js` | Chorus/Monologue toggle | Deep |
+| `ui/prompt-selector.js` | Curated cards + free-text + Ask button, keyboard a11y | Deep |
+| `ui/prompt-selector.css` | Prompt cards + input styling | Shallow (style) |
+| `ui/mode-toggle.js` | Chorus/Monologue toggle, keyboard a11y | Deep |
+| `ui/mode-toggle.css` | Toggle button styling | Shallow (style) |
 | `ui/column.js` | Per-model text stream + waveform lifecycle | Deep |
+| `ui/column.css` | Column layout + scrollbar styling | Shallow (style) |
 | `ui/history.js` | Session history panel | Deep |
+| `ui/history.css` | History sidebar styling | Shallow (style) |
+| `styles/global.css` | CSS reset, variables, animations (spinner, pulse) | Shallow (style) |
+| `styles/top-bar.css` | Header bar layout | Shallow (style) |
 | `session/orchestrator.js` | Session state coordination | Deep |
 | `session/channel-pipeline.js` | Per-model pipeline (buffer→queue→channel) | Deep |
 | `session/storage.js` | Session persistence with adapter seam | Deep |
@@ -224,19 +232,43 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `getReasoningContent.js` | Standalone reasoning fetcher (legacy utility) | Shallow |
 | `saveReasoning.js` | Standalone reasoning saver (legacy utility) | Shallow |
 | `normalizeModelName.js` | Slugify model names for directories | Shallow |
+| `tsconfig.json` | TypeScript strict check-js config | Shallow (config) |
+| `vite.config.js` | Vite dev/build config | Shallow (config) |
+| `vite-env.d.ts` | Vite/CSS module type declarations | Shallow (types) |
+| `.gitignore` | Ignored files (node_modules, .env, scratch) | Shallow (config) |
+| `.env` | Legacy CLI script vars (not read by browser app) | Shallow (config) |
+| `test/` | Node test runner suites (15 tests, 5 suites) | Shallow (test) |
 
 ## Legacy Scripts
 
-`getReasoningContent.js` and `saveReasoning.js` are standalone Node.js utilities for fetching and saving reasoning content to disk. They are NOT part of the browser application flow. They reuse `llm/llm-stream.js` for streaming.
+`getReasoningContent.js` and `saveReasoning.js` are standalone Node.js utilities for fetching and saving reasoning content to disk. They are NOT part of the browser application flow. They reuse `llm/llm-stream.js` for streaming and read config from `.env` (not `config.js`). `normalizeModelName.js` is a shared helper used by the legacy scripts to slugify model names for directory paths.
 
-## Testing Approach
+## Testing
 
-No test framework is installed. Smoke tests can be written with Node.js built-in `node:test` (Node 18+) since the codebase uses only standard APIs (`fetch`, streams, AbortController). Key testable modules:
+Tests use Node.js built-in `node:test` (Node 18+) with `--experimental-test-module-mocks`. Run with:
+
+```bash
+npm test
+```
+
+### Test inventory (`test/`)
+
+| File | Tests | What it covers |
+|---|---|---|
+| `sentence-buffer.test.js` | 5 | Total-token cap across sentences, timeout flush, post-cap ignore |
+| `health-check.test.js` | 4 | URL construction with/without trailing slashes, fetch errors |
+| `llm-stream.test.js` | 4 | Endpoint construction with/without trailing slashes |
+| `orchestrator.test.js` | 1 | stop() → Idle transition after manual stop |
+| `channel-pipeline.test.js` | 1 | Empty LLM stream → setError on column |
+
+### Testable modules (for new tests)
 
 - `llm/llm-stream.js` — Mock `fetch` with ReadableStream SSE responses
 - `tts/playback-queue.js` — Mock TTS engine and channel
 - `session/channel-pipeline.js` — Mock all dependencies
 - `session/storage.js` — Inject MemoryStorageAdapter
+- `tts/sentence-buffer.js` — Pure logic, no mocks needed
+- `llm/health-check.js` — Mock global `fetch`
 
 ## Known Extension Points
 

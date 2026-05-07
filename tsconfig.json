@@ -13,6 +13,7 @@
   "exclude": [
     "node_modules",
     "dist",
+    "test",
     "saveReasoning.js",
     "getReasoningContent.js",
     "normalizeModelName.js"

@@ -9,11 +9,12 @@
 | **Curated prompt** | One of five pre-written philosophical questions that frame the artistic theme | Preset, starter, suggested question |
 | **Free-text question** | A user-typed question not from the curated list | Custom prompt, typed input |
 | **Ask** | The user action that starts a session (clicking the Ask button) | Submit, go, start, run |
-| **Loading** | Session state: TTS model checking and LLM provider health pings | Warm-up, setup, preparing |
+| **Loading** | Session state: TTS model download + initialization (shows spinner) | Warm-up, setup, preparing |
+| **Checking** | Session state: LLM provider health pings (/models). Follows Loading, precedes Thinking. | Probing, pinging, verifying |
 | **Thinking** | Session state: LLM reasoning streams are active and TTS is playing | Streaming, generating, running |
 | **Speaking** | Session state: LLM streams have ended but TTS is finishing buffered sentences | Tail, finishing, trailing |
 | **Done** | Session state: all playback complete, session saved, replay available | Finished, complete, ended |
-| **Stop** | User action that ends a session early via a soft stop | Cancel, abort, kill, mute |
+| **Stop** | User action that soft-stops all pipelines, transitions through Done to Idle. Session can immediately start again. | Cancel, abort, kill, mute |
 | **Soft stop** | Finish the current TTS sentence, then abort streams and silence audio | Graceful stop, fade-stop |
 | **Replay** | Re-synthesize TTS audio from a past session's stored reasoning text | Playback, listen again, re-listen |
 | **History** | The list of past saved sessions browsable for replay | Archive, past sessions, log |
@@ -70,6 +71,7 @@
 | **Display name** | The human-readable name for a model shown in the UI (e.g. "Qwen", not "qwen_qwen3-30b") | Label, title, heading |
 | **Color** | The distinguishing hex color assigned to a model, applied to text and waveform | Hue, tint, theme color |
 | **Dark theater** | The visual theme: black background, colored text, glowing waveforms | Dark mode, cinematic theme, stage |
+| **Loading spinner** | CSS-animated ring shown during the Loading state, hidden when session enters Checking. Provides visual feedback during TTS model download (~5-30s). | Loader, progress indicator |
 
 ## Persistence
 

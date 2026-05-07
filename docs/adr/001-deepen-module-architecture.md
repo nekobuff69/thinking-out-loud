@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — implemented in issues #9, #15, #16, #17, #18.
+Accepted — implemented in issues #9, #15, #16, #17, #18. Post-implementation testing added in #22–#27 (May 2026).
 
 ## Context
 
@@ -99,12 +99,21 @@ Idle ──enqueue()──► Synthesizing ──synth done──► Playing ─
 
 - **More files:** 13 source files became 15 (added `channel-pipeline.js`, `local-storage-adapter.js`, `memory-storage-adapter.js`; removed `lm-studio-client.js`, `stream-parser.js`). Net +2 files.
 - **Slightly more indirection:** `Orchestrator` → `ChannelPipeline` → `TTSPlaybackQueue` adds one layer versus the previous flat object.
-- **No tests written yet:** The PRD established the testing approach but implementation is tracked separately.
+- **Tests added post-implementation:** 15 tests across 5 suites using Node.js built-in `node:test`. Covers SentenceBuffer token cap, health-check URL construction, LLM stream endpoint construction, orchestrator stop→Idle transition, and ChannelPipeline empty-stream detection.
 
 ## Related Issues
 
+**Architecture (resolved):**
 - #9 — Parent architecture deepening PRD
 - #15 — Restore LLM stream configurability and fix URL handling
 - #16 — Clean up ChannelPipeline lifecycle + Orchestrator error swallowing
 - #17 — Fix minor nits (gitignore newline + waveform controller contract)
 - #18 — Remove dead Stopped-state branches from TTSPlaybackQueue
+
+**Post-ADR fixes + tests (resolved):**
+- #22 — Orchestrator stop→Idle, empty-stream detection
+- #23 — SentenceBuffer total-token cap
+- #24 — Docs accuracy (CONTEXT.md, package.json)
+- #25 — Loading UX, keyboard a11y, TTS error catch
+- #26 — URL construction hardening
+- #27 — CORS docs + .env cleanup
