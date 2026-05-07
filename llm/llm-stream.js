@@ -25,7 +25,8 @@ export async function streamReasoning(url, model, systemPrompt, question, callba
     options = {};
   }
 
-  const endpoint = url.endsWith("/chat/completions") ? url : `${url}/chat/completions`;
+  const normalized = url.replace(/\/+$/g, "");
+  const endpoint = normalized.endsWith("/chat/completions") ? normalized : `${normalized}/chat/completions`;
 
   const attempt = async (/** @type {AbortSignal | undefined} */ abortSignal) => {
     const response = await fetch(endpoint, {

@@ -12,7 +12,8 @@ export async function healthCheck(baseUrl, timeoutMs = 5000) {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
-      const response = await fetch(`${baseUrl}/models`, {
+      const base = baseUrl.replace(/\/+$/g, "");
+      const response = await fetch(`${base}/models`, {
         method: "GET",
         signal: controller.signal,
       });
