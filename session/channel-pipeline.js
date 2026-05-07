@@ -126,6 +126,9 @@ export class ChannelPipeline {
           if (!this.#contentHit) {
             this.#buffer?.flush();
           }
+          if (this.#reasoningText.length === 0) {
+            this.setError("No reasoning received");
+          }
         },
       },
       combinedSignal

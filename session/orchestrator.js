@@ -330,5 +330,6 @@ export class Orchestrator {
       pipeline.softStop();
     }
     this.#setState("Done");
+    this.#state = "Idle";
   }
 }
