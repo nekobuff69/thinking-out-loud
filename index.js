@@ -59,6 +59,9 @@ stateLabel.className = "state-label";
 stateLabel.style.cssText = "color:#555;font-size:0.8rem;margin-left:1rem;";
 topBar.appendChild(stateLabel);
 
+// Loading spinner (injected into HTML statically; get reference)
+const loadingSpinner = document.getElementById("loading-spinner");
+
 // History panel
 const historyPanel = createHistory(document.body, store, (session) => {
   orchestrator.replay(session);
@@ -94,6 +97,11 @@ orchestrator.onStateChange((state) => {
     stateLabel.style.color = "#555";
   }
 
+  // Show spinner during loading phases, hide otherwise
+  if (loadingSpinner) {
+    loadingSpinner.classList.toggle("visible", state.startsWith("Loading"));
+  }
+
   if (state === "Loading" || state.startsWith("Loading:") || state === "Checking" || state === "Thinking" || state === "Speaking") {
     promptSelector.setEnabled(false);
     modeToggle.setEnabled(false);
@@ -120,5 +128,10 @@ stopBtn.addEventListener("click", () => {
 });
 
 promptSelector.onAsk(async (question) => {
-  await orchestrator.start(question, modeToggle.getMode());
+  try {
+    await orchestrator.start(question, modeToggle.getMode());
+  } catch (err) {
+    console.error("Session start failed:", err);
+    // orchestrator.onStateChange handles Error state via stop() path
+  }
 });

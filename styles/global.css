@@ -33,6 +33,31 @@ body {
   50% { opacity: 1; }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Loading spinner */
+#loading-spinner {
+  display: none;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+}
+
+#loading-spinner.visible {
+  display: flex;
+}
+
+#loading-spinner .spinner-ring {
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--border);
+  border-top-color: #ffaa00;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 /* State label colors */
 .state-label.checking { color: #ffaa00; }
 .state-label.error { color: #ff4444; }

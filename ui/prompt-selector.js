@@ -160,10 +160,6 @@ export function createPromptSelector(container, curatedPrompts, recentQuestions 
    * @param {boolean} value
    * @returns {void}
    */
-  /**
-   * @param {boolean} value
-   * @returns {void}
-   */
   function setEnabled(value) {
     enabled = value;
     textInput.disabled = !value;
