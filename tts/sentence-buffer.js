@@ -49,6 +49,7 @@ export class SentenceBuffer {
       if (boundaryIndex >= 0) {
         const sentence = this.#buffer.slice(0, boundaryIndex + 1).trim();
         if (sentence) this.#onSentence(sentence);
+        this.#totalTokensFlushed += this.#tokenCount;
         this.#buffer = "";
         this.#tokenCount = 0;
       }
@@ -61,6 +62,7 @@ export class SentenceBuffer {
     if (boundaryIndex >= 0) {
       const sentence = this.#buffer.slice(0, boundaryIndex + 1).trim();
       if (sentence) this.#onSentence(sentence);
+      this.#totalTokensFlushed += this.#tokenCount;
       this.#buffer = this.#buffer.slice(boundaryIndex + 1);
       this.#tokenCount = 0;
       return;
@@ -70,6 +72,7 @@ export class SentenceBuffer {
     if (this.#tokenCount >= this.#timeoutTokens) {
       const text = this.#buffer.trim();
       if (text) this.#onSentence(text);
+      this.#totalTokensFlushed += this.#tokenCount;
       this.#buffer = "";
       this.#tokenCount = 0;
     }
@@ -80,7 +83,10 @@ export class SentenceBuffer {
    */
   flush() {
     const text = this.#buffer.trim();
-    if (text) this.#onSentence(text);
+    if (text) {
+      this.#onSentence(text);
+      this.#totalTokensFlushed += this.#tokenCount;
+    }
     this.#buffer = "";
     this.#tokenCount = 0;
   }
