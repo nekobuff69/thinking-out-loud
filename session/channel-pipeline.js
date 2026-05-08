@@ -1,4 +1,3 @@
-import { streamReasoning } from "../llm/llm-stream.js";
 import { SentenceBuffer } from "../tts/sentence-buffer.js";
 import { TTSPlaybackQueue } from "../tts/playback-queue.js";
 
@@ -7,7 +6,8 @@ import { TTSPlaybackQueue } from "../tts/playback-queue.js";
  * @typedef {import("../config.js").TTSConfig} TTSConfig
  * @typedef {import("../ui/column.js").ColumnAPI} ColumnAPI
  * @typedef {import("../audio/audio-graph.js").AudioGraph} AudioGraph
- * @typedef {import("../tts/kokoro-backend.js").KokoroBackend} KokoroBackend
+ * @typedef {import("../tts/tts-engine.js").TTSEngine} TTSEngine
+ * @typedef {import("../llm/providers/llm-provider.js").LLMProvider} LLMProvider
  */
 
 /**
@@ -15,7 +15,8 @@ import { TTSPlaybackQueue } from "../tts/playback-queue.js";
  * @property {ModelConfig} model
  * @property {TTSConfig} ttsConfig
  * @property {ColumnAPI} column
- * @property {KokoroBackend} ttsEngine
+ * @property {TTSEngine} ttsEngine
+ * @property {LLMProvider} llmProvider
  * @property {AudioGraph} audioGraph
  * @property {() => void} [onIdle]
  */
@@ -32,8 +33,10 @@ export class ChannelPipeline {
   #ttsConfig;
   /** @type {ColumnAPI} */
   #column;
-  /** @type {KokoroBackend} */
+  /** @type {TTSEngine} */
   #ttsEngine;
+  /** @type {LLMProvider} */
+  #llmProvider;
   /** @type {AudioGraph} */
   #audioGraph;
   /** @type {(() => void) | undefined} */
@@ -56,11 +59,12 @@ export class ChannelPipeline {
   /**
    * @param {ChannelPipelineDeps} deps
    */
-  constructor({ model, ttsConfig, column, ttsEngine, audioGraph, onIdle }) {
+  constructor({ model, ttsConfig, column, ttsEngine, llmProvider, audioGraph, onIdle }) {
     this.#model = model;
     this.#ttsConfig = ttsConfig;
     this.#column = column;
     this.#ttsEngine = ttsEngine;
+    this.#llmProvider = llmProvider;
     this.#audioGraph = audioGraph;
     this.#onIdle = onIdle;
   }
@@ -109,11 +113,9 @@ export class ChannelPipeline {
       },
     });
 
-    return streamReasoning(
-      this.#model.url,
-      this.#model.model,
-      systemPrompt,
+    return this.#llmProvider.streamReasoning(
       question,
+      systemPrompt,
       {
         onReasoningToken: (token) => {
           this.feedToken(token);

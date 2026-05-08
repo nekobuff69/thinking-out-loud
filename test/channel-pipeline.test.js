@@ -1,5 +1,6 @@
-import { describe, it, mock } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { ChannelPipeline } from "../session/channel-pipeline.js";
 
 describe("ChannelPipeline", () => {
   /** @type {string[]} */
@@ -7,11 +8,11 @@ describe("ChannelPipeline", () => {
 
   /**
    * @returns {{
-   *   pipeline: import("../session/channel-pipeline.js").ChannelPipeline,
+   *   pipeline: ChannelPipeline,
    *   setErrorCalls: string[]
    * }}
    */
-  async function makePipeline() {
+  function makePipeline() {
     setErrorCalls = [];
 
     const mockColumn = {
@@ -38,29 +39,23 @@ describe("ChannelPipeline", () => {
       },
     };
 
-    // Mock streamReasoning to call onDone immediately with zero reasoning tokens
-    mock.module("../llm/llm-stream.js", {
-      namedExports: {
-        streamReasoning: async (
-          /** @type {string} */ url,
-          /** @type {string} */ model,
-          /** @type {string} */ systemPrompt,
-          /** @type {string} */ question,
-          /** @type {{ onReasoningToken?: (token: string) => void, onContentStart?: () => void, onDone?: () => void }} */ callbacks
-        ) => {
-          // Simulate: stream ends without any reasoning tokens
-          callbacks.onDone?.();
-        },
+    const mockLlmProvider = {
+      streamReasoning: async (
+        /** @type {string} */ _question,
+        /** @type {string} */ _systemPrompt,
+        /** @type {{ onReasoningToken?: (token: string) => void, onContentStart?: () => void, onDone?: () => void }} */ callbacks
+      ) => {
+        // Simulate: stream ends without any reasoning tokens
+        callbacks.onDone?.();
       },
-    });
-
-    const { ChannelPipeline } = await import("../session/channel-pipeline.js");
+    };
 
     const pipeline = new ChannelPipeline({
       model: { name: "testModel", url: "http://localhost", model: "test", voice: "af", color: "#fff", pan: 0, provider: "test" },
       ttsConfig: { maxTokens: 200, sentenceTimeoutTokens: 30 },
       column: mockColumn,
       ttsEngine: mockTtsEngine,
+      llmProvider: mockLlmProvider,
       audioGraph: mockAudioGraph,
     });
 
@@ -70,7 +65,7 @@ describe("ChannelPipeline", () => {
   }
 
   it("shows error when LLM stream produces zero reasoning tokens", async () => {
-    const { pipeline, setErrorCalls } = await makePipeline();
+    const { pipeline, setErrorCalls } = makePipeline();
 
     // Start the stream — the mock fires onDone immediately with zero tokens
     await pipeline.startStream("system prompt", "question");

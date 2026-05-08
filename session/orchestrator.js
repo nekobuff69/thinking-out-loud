@@ -1,4 +1,5 @@
 import { healthCheck } from "../llm/health-check.js";
+import { OpenAICompatibleProvider } from "../llm/providers/openai-compatible-provider.js";
 import { ChannelPipeline } from "./channel-pipeline.js";
 
 /**
@@ -181,8 +182,13 @@ export class Orchestrator {
     this.#activeSessions.clear();
     this.#sessionData = { ...sessionData, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
 
-    // Use stored model data (preserving original voices/pan) for replay
-    this.#setupPipelines(sessionData.models);
+    // Use stored model data (preserving original voices/pan) for replay,
+    // but merge with current config to get url/model/reasoningFormat for provider
+    const modelsForReplay = sessionData.models.map((stored) => {
+      const configModel = this.#models.find((m) => m.name === stored.name);
+      return configModel ? { ...configModel, ...stored } : stored;
+    });
+    this.#setupPipelines(/** @type {ModelConfig[]} */ (/** @type {unknown} */ (modelsForReplay)));
 
     // Feed stored reasoning text into each model's pipeline concurrently
     this.#setState("Thinking");
@@ -208,23 +214,30 @@ export class Orchestrator {
   }
 
   /**
-   * @param {Array<import("./storage.js").SessionModelData | ModelConfig> | undefined} [modelsToUse]
+   * @param {ModelConfig[] | undefined} [modelsToUse]
    * @returns {void}
    */
   #setupPipelines(modelsToUse) {
     if (!this.#sessionData) return;
     const models = modelsToUse || this.#models;
     let index = 0;
-    for (const model of models) {
+    for (const model of /** @type {Array<import("../config.js").ModelConfig>} */ (models)) {
       const column = this.#columns.get(model.name);
       if (!column) continue;
       column.clear();
+
+      const llmProvider = new OpenAICompatibleProvider({
+        url: model.url,
+        model: model.model,
+        reasoningFormat: /** @type {"separate" | "tagged" | "none"} */ (model.reasoningFormat ?? "separate"),
+      });
 
       const pipeline = new ChannelPipeline({
         model: /** @type {ModelConfig} */ (model),
         ttsConfig: this.#ttsConfig,
         column,
         ttsEngine: this.#ttsEngine,
+        llmProvider,
         audioGraph: this.#audioGraph,
         onIdle: () => {
           if (this.#mode === "monologue") {
