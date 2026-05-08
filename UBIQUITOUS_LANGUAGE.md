@@ -24,9 +24,10 @@
 | Term | Definition | Aliases to avoid |
 |---|---|---|
 | **LLM** | A large language model running locally that receives a question and produces reasoning | AI, bot, agent, mind |
-| **Model** | A specific LLM identified by architecture and weights (e.g. Qwen, Nemotron) | LLM instance, engine, brain |
+| **Model** | A specific LLM identified by architecture and weights (e.g. Qwen, Gemma, GPT-OSS) | LLM instance, engine, brain |
 | **Provider** | The local inference server that hosts and runs models (e.g. LM Studio) | Server, backend, inference engine, runtime |
 | **Reasoning** | The LLM's internal thought process — the `reasoning_content` field in the API response | Thinking, chain of thought, internal monologue, reasoning block |
+| **Reasoning format** | How the provider separates reasoning from final answer: `separate` (dedicated field), `tagged` (`<think>` tags), or `none` (no separation) | Format mode, parsing mode |
 | **Reasoning content** | The raw text of the LLM's reasoning, streamed token by token | Thinking block, thought stream, reasoning stream |
 | **Final answer** | The LLM's polished output — the `content` field in the API response. Deliberately suppressed. | Response, output, answer, completion |
 | **Content boundary** | The point in the stream where the LLM transitions from reasoning to final answer | Cut point, answer start, switch |
@@ -42,14 +43,15 @@
 | **TTS** | Text-to-speech: the browser-side synthesis that converts reasoning text into spoken audio | Speech synthesis, voice synthesis, audio generation |
 | **TTS model** | The speech synthesis model loaded in the browser — Kokoro-82M via kokoro-js (`StyleTextToSpeech2Model`, ONNX in IndexedDB) | Speech engine, voice model, synthesis backend |
 | **Voice** | A distinct speaker identity within a TTS model, assigned to one model | Speaker, persona, voice preset, timbre |
-| **Sentence buffer** | Accumulated reasoning tokens waiting for a sentence boundary before TTS synthesis | Token queue, text buffer, pending text |
+| **Sentence buffer** | Accumulates reasoning tokens and bundles two complete sentences before flushing to TTS synthesis | Token queue, text buffer, pending text |
 | **Sentence boundary** | Punctuation (`.`, `!`, `?`, `;`, newline) that triggers TTS synthesis of the buffered text | Break point, flush trigger, end-of-sentence |
 | **Sentence chunk** | A complete sentence flushed from the buffer and sent to TTS | Utterance, segment, speech unit |
-| **Sentence gap** | The 200ms silence inserted between consecutive sentence chunks | Pause, beat, breath, silence, interval |
-| **Sentence timeout** | A fallback: if no sentence boundary arrives after ~30 tokens, synthesize anyway | Force-flush, timeout flush, chunk limit |
+| **Sentence gap** | The 50ms silence inserted between consecutive sentence chunks | Pause, beat, breath, silence, interval |
+| **Sentence timeout** | A fallback: if no sentence boundary arrives after ~60 tokens, force-flush the completed sentence | Force-flush, timeout flush, chunk limit |
 | **AudioContext** | The browser's Web Audio API context managing all audio routing and playback | Audio graph, audio engine, sound system |
 | **Channel** | A per-model audio pipeline: gain node → stereo panner → AnalyserNode → output | Audio lane, voice lane, audio strip |
 | **Panning** | Stereo spatial positioning of a channel (left, center, right) | Spatial audio, stereo position, placement |
+| **Pre-synthesis** | Synthesizing the next sentence chunk during playback of the current one, eliminating gaps after the first sentence | Look-ahead synthesis, predictive synthesis |
 | **Ducking** | Subtle volume reduction on all channels when multiple voices overlap | Volume attenuation, gain reduction |
 | **AnalyserNode** | The Web Audio API node that extracts real-time frequency/amplitude data for waveform rendering | Audio analyser, FFT node |
 
@@ -71,6 +73,8 @@
 | **Display name** | The human-readable name for a model shown in the UI (e.g. "Qwen", not "qwen_qwen3-30b") | Label, title, heading |
 | **Color** | The distinguishing hex color assigned to a model, applied to text and waveform | Hue, tint, theme color |
 | **Dark theater** | The visual theme: black background, colored text, glowing waveforms | Dark mode, cinematic theme, stage |
+| **Debug overlay** | A togglable panel (`?debug` query param or keyboard shortcut) showing real-time pipeline state, token rates, buffer fill, TTS queue depth, and error logs | Diagnostics panel, dev tools, status panel |
+| **Event bus** | A lightweight observer pattern allowing pipeline modules to emit state events without knowing about consumers (e.g. the debug overlay) | Message bus, pub-sub, event stream |
 | **Loading spinner** | CSS-animated ring shown during the Loading state, hidden when session enters Checking. Provides visual feedback during TTS model download (~5-30s). | Loader, progress indicator |
 
 ## Persistence

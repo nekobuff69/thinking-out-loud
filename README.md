@@ -43,7 +43,8 @@ npm run preview
 - `styles/` — Global CSS (reset, variables, spinner animation) and top-bar CSS
 - `audio/` — Audio graph (Web Audio API) and waveform visualization (canvas)
 - `tts/` — Text-to-speech engine (Kokoro backend via kokoro-js)
-- `llm/` — LLM streaming (SSE) and provider health checks
-- `session/` — Orchestrator, channel pipeline, storage (localStorage + adapter seam)
-- `test/` — Node test runner suites (15 tests, 5 suites)
+- `llm/` — LLM streaming (SSE), provider health checks, and provider abstraction (`llm/providers/`)
+- `session/` — Orchestrator, channel pipeline, event bus, storage (localStorage + adapter seam)
+- `tts/` — Text-to-speech engine (`TTSEngine` interface, Kokoro backend, sentence buffer, playback queue)
+- `test/` — Node test runner suites (35 tests, 8 suites)
 - `docs/` — ADRs and agent operating instructions

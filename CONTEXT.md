@@ -4,7 +4,7 @@
 
 ## Purpose
 
-"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three local LLMs (Qwen, Nemotron, GPT-OSS) stream their internal reasoning tokens simultaneously. Each model's reasoning is synthesized to speech in a distinct voice, spatially panned across stereo channels, with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
+"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three local LLMs (Qwen, Gemma, GPT-OSS) stream their internal reasoning tokens simultaneously. Each model's reasoning is synthesized to speech in a distinct voice, spatially panned across stereo channels, with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
 
 ## Tech Stack
 
@@ -32,11 +32,13 @@ index.html ──► index.js (bootstraps everything)
 │  ├── ui/prompt-selector.js    Ask button, curated prompts   │
 │  ├── ui/mode-toggle.js        Chorus / Monologue switch     │
 │  ├── ui/column.js             Per-model text + waveform     │
-│  └── ui/history.js            Past sessions panel           │
+│  ├── ui/history.js            Past sessions panel           │
+│  └── ui/debug-overlay.js      Togglable pipeline diagnostics  │
 ├─────────────────────────────────────────────────────────────┤
 │  Session Layer (coordinates state across models)            │
 │  ├── session/orchestrator.js  Session lifecycle coordinator │
 │  ├── session/channel-pipeline.js  Per-model full pipeline   │
+│  ├── session/event-bus.js     Observable state events       │
 │  ├── session/storage.js       SessionStore persistence      │
 │  ├── session/local-storage-adapter.js  Production adapter   │
 │  └── session/memory-storage-adapter.js  Test adapter        │
@@ -52,7 +54,9 @@ index.html ──► index.js (bootstraps everything)
 │  └── audio/waveform.js        Canvas analyser viz           │
 ├─────────────────────────────────────────────────────────────┤
 │  LLM Layer (streaming inference)                            │
-│  ├── llm/llm-stream.js        streamReasoning() deep seam   │
+│  ├── llm/llm-stream.js        Backward-compat wrapper       │
+│  ├── llm/providers/llm-provider.js   Abstract interface     │
+│  ├── llm/providers/openai-compatible-provider.js  Default impl│
 │  └── llm/health-check.js      /models ping for reachability │
 ├─────────────────────────────────────────────────────────────┤
 │  Config & Utilities                                         │
@@ -80,10 +84,13 @@ Orchestrator:
   3. For each reachable model:
      • Create ChannelPipeline
      • ChannelPipeline.createChannel() → AudioGraph channel + waveform
-  4. Fire all LLM streams concurrently (streamReasoning)
+  4. Create an `LLMProvider` per model (`OpenAICompatibleProvider`)
+  5. Fire all LLM streams concurrently via `LLMProvider.streamReasoning()`
      • Tokens → ChannelPipeline.feedToken() → Column.appendToken()
-     • Sentence boundaries → SentenceBuffer → TTSPlaybackQueue.enqueue()
+     • Sentence boundaries → SentenceBuffer (bundles 2 sentences) → TTSPlaybackQueue.enqueue()
+     • Pre-synthesis: next sentence is synthesized during current playback
      • TTS synthesis → AudioGraph channel.play() → waveform animates
+     • State events → EventBus → DebugOverlay (when enabled)
   5. When all streams end + all TTS idle → save session → Done
 ```
 
@@ -109,7 +116,7 @@ For each stored model reasoning:
 Owns one Model's entire pipeline end-to-end. The Orchestrator delegates to it.
 
 ```
-new ChannelPipeline({ model, ttsConfig, column, ttsEngine, audioGraph, onIdle })
+new ChannelPipeline({ model, ttsConfig, column, ttsEngine, llmProvider, audioGraph, onIdle, eventBus })
   .createChannel()                    // Creates audio channel + waveform
   .startStream(systemPrompt, question, signal?)  // → Promise (LLM → TTS)
   .drainText(text)                    // Replay stored reasoning
@@ -120,38 +127,56 @@ new ChannelPipeline({ model, ttsConfig, column, ttsEngine, audioGraph, onIdle })
   .isActive / .isCapped / .reasoningText  // Getters
 ```
 
-### streamReasoning (`llm/llm-stream.js`)
+### LLMProvider (`llm/providers/llm-provider.js`)
 
-Single-call LLM streaming. Hides fetch → SSE parse → callback pipeline.
+Abstract interface for LLM streaming. Concrete implementations hide fetch → SSE parse → callback pipeline.
 
 ```js
-await streamReasoning(
-  url,            // Full URL or base URL (handles /chat/completions)
-  model,
-  systemPrompt,
+// OpenAICompatibleProvider is the default implementation
+const provider = new OpenAICompatibleProvider({ url, model, reasoningFormat });
+await provider.streamReasoning(
   question,
+  systemPrompt,
   {
     onReasoningToken: (token) => {},
     onContentStart: () => {},       // Content boundary reached
     onDone: () => {},
   },
-  options = {},    // Extra body fields (e.g. { reasoning: { effort: "high" } })
-  signal           // AbortSignal
+  signal
 );
 ```
 
+**Reasoning formats:**
+- `"separate"` (default): reads `delta.reasoning_content` / `delta.reasoning`
+- `"tagged"`: extracts reasoning from `<think>...</think>` tags inside `delta.content`
+- `"none"`: treats all `delta.content` as reasoning
+
+`llm/llm-stream.js` preserves a backward-compatible `streamReasoning()` wrapper.
+
 ### TTSPlaybackQueue (`tts/playback-queue.js`)
 
-Explicit state machine: Idle → Synthesizing → Playing → Gapping → Idle, with Stopped and Paused states.
+Explicit state machine with **pre-synthesis**: while sentence N plays, sentence N+1 is synthesized on the main thread and stored in `#nextBuffer` for gap-free playback.
 
 ```
-.enqueue(text)   // Add sentence to queue
-.pause()         // Hold current position
+State machine: Idle → Synthesizing → Playing → Gapping → Idle
+                ↑_________________________________________↓
+                (with pre-synthesis happening during Playing)
+
+.enqueue(text)   // Add sentence to queue; kicks off pre-synthesis
+.pause()         // Hold current position (pre-synthesis continues)
 .resume()        // Continue from pause
 .stop()          // Soft stop: finish current, discard rest
 .isActive        // Any pending or in-flight work?
 .isPaused        // Currently paused?
+.state           // Current state name
+.depth           // Queue depth + pre-baked buffer count
 ```
+
+**Key behaviors:**
+- First sentence always incurs synthesis delay
+- Every subsequent sentence plays immediately from pre-baked buffer
+- Sentence gap reduced to **50ms**
+- Pre-synthesis continues even while paused (supports Monologue seamless transitions)
 
 ### SessionStore (`session/storage.js`)
 
@@ -166,6 +191,29 @@ store.clear();            // Remove all
 store.saveQuestion(text); // Deduplicated recent questions
 store.getQuestions();     // Recent question list
 ```
+
+### SimpleEventBus (`session/event-bus.js`)
+
+Lightweight observer for cross-module state observation. Pipeline modules emit events; the debug overlay (or any listener) subscribes. No producer knows about its consumers.
+
+```js
+const bus = new SimpleEventBus();
+bus.on("token", (data) => { ... });          // { modelName, token }
+bus.on("buffer-state", (data) => { ... });   // { modelName, tokenCount, wordCount, sentencesHeld, capped }
+bus.on("queue-state", (data) => { ... });    // { modelName, depth, state }
+bus.on("synth-timing", (data) => { ... });   // { modelName, timingMs }
+bus.on("pipeline-progress", (data) => { ... }); // { modelName, stage }
+bus.on("pipeline-error", (data) => { ... }); // { modelName, message, timestamp }
+bus.emit("token", { modelName: "Qwen", token: "h" });
+```
+
+### DebugOverlay (`ui/debug-overlay.js`)
+
+Togglable diagnostics panel. Enabled via `?debug` query parameter or `` ` `` / `Ctrl+Shift+D` keyboard shortcut.
+
+- **Per-model:** token rate, buffer state (tokens + word count, sentences held), queue state, synthesis timing, pipeline progress, error logs
+- **Global:** session state, aggregate token rates
+- Styled as a semi-transparent fixed panel that does not interfere with the main UI
 
 ### AudioGraph (`audio/audio-graph.js`)
 
@@ -218,16 +266,19 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `styles/top-bar.css` | Header bar layout | Shallow (style) |
 | `session/orchestrator.js` | Session state coordination | Deep |
 | `session/channel-pipeline.js` | Per-model pipeline (buffer→queue→channel) | Deep |
+| `session/event-bus.js` | Observable state events (pub-sub) | Shallow |
 | `session/storage.js` | Session persistence with adapter seam | Deep |
 | `session/local-storage-adapter.js` | localStorage wrapper | Shallow |
 | `session/memory-storage-adapter.js` | In-memory adapter for tests | Shallow |
 | `tts/kokoro-backend.js` | kokoro-js TTS backend (StyleTextToSpeech2Model + resampling) | Deep |
 | `tts/tts-engine.js` | Abstract TTS interface | Shallow (interface) |
-| `tts/sentence-buffer.js` | Token accumulation + boundary detection | Deep |
-| `tts/playback-queue.js` | TTS state machine (6 explicit states) | Deep |
+| `tts/sentence-buffer.js` | Token accumulation + two-sentence bundling + boundary detection | Deep |
+| `tts/playback-queue.js` | TTS state machine with pre-synthesis (6 explicit states) | Deep |
 | `audio/audio-graph.js` | Web Audio routing + ducking | Deep |
 | `audio/waveform.js` | Canvas visualization from AnalyserNode | Deep |
-| `llm/llm-stream.js` | Unified fetch + SSE parse + callbacks | Deep |
+| `llm/llm-stream.js` | Backward-compat wrapper around provider | Shallow |
+| `llm/providers/llm-provider.js` | Abstract LLMProvider interface | Shallow (interface) |
+| `llm/providers/openai-compatible-provider.js` | OpenAI-compatible SSE streaming with reasoningFormat | Deep |
 | `llm/health-check.js` | Provider reachability ping | Shallow |
 | `getReasoningContent.js` | Standalone reasoning fetcher (legacy utility) | Shallow |
 | `saveReasoning.js` | Standalone reasoning saver (legacy utility) | Shallow |
@@ -237,7 +288,9 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `vite-env.d.ts` | Vite/CSS module type declarations | Shallow (types) |
 | `.gitignore` | Ignored files (node_modules, .env, scratch) | Shallow (config) |
 | `.env` | Legacy CLI script vars (not read by browser app) | Shallow (config) |
-| `test/` | Node test runner suites (15 tests, 5 suites) | Shallow (test) |
+| `test/` | Node test runner suites (35 tests, 8 suites) | Shallow (test) |
+| `ui/debug-overlay.js` | Togglable pipeline diagnostics panel | Deep |
+| `ui/debug-overlay.css` | Debug overlay styling | Shallow (style) |
 
 ## Legacy Scripts
 
@@ -255,18 +308,22 @@ npm test
 
 | File | Tests | What it covers |
 |---|---|---|
-| `sentence-buffer.test.js` | 5 | Total-token cap across sentences, timeout flush, post-cap ignore |
+| `sentence-buffer.test.js` | 9 | Two-sentence bundling, total-token cap, timeout flush, per-sentence reset |
 | `health-check.test.js` | 4 | URL construction with/without trailing slashes, fetch errors |
 | `llm-stream.test.js` | 4 | Endpoint construction with/without trailing slashes |
+| `openai-compatible-provider.test.js` | 9 | Separate/tagged/none reasoning formats, URL construction, retry, abort |
 | `orchestrator.test.js` | 1 | stop() → Idle transition after manual stop |
 | `channel-pipeline.test.js` | 1 | Empty LLM stream → setError on column |
+| `playback-queue.test.js` | 7 | Pre-synthesis, gap-free playback, paused pre-synthesis, soft stop |
 
 ### Testable modules (for new tests)
 
 - `llm/llm-stream.js` — Mock `fetch` with ReadableStream SSE responses
+- `llm/providers/openai-compatible-provider.js` — Mock `fetch` with SSE; test reasoningFormat modes
 - `tts/playback-queue.js` — Mock TTS engine and channel
 - `session/channel-pipeline.js` — Mock all dependencies
 - `session/storage.js` — Inject MemoryStorageAdapter
+- `session/event-bus.js` — Pure logic, no mocks needed
 - `tts/sentence-buffer.js` — Pure logic, no mocks needed
 - `llm/health-check.js` — Mock global `fetch`
 
@@ -274,7 +331,7 @@ npm test
 
 | Extension | How | Files |
 |---|---|---|
-| New LLM provider | Change `url` in `config.js` | `config.js` |
+| New LLM provider | Implement `LLMProvider` interface; update `config.js` | `llm/providers/`, `config.js` |
 | New TTS backend | Extend `TTSEngine` | `tts/tts-engine.js` |
 | New storage backend | Implement adapter interface | `session/storage.js` |
 | IndexedDB storage | New adapter + inject | `session/storage.js` |
