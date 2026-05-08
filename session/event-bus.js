@@ -41,5 +41,3 @@ export class SimpleEventBus {
   }
 }
 
-/** Global singleton event bus for the application. */
-export const eventBus = new SimpleEventBus();

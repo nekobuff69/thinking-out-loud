@@ -14,6 +14,8 @@ export class SentenceBuffer {
   /** @type {number} */
   #pendingTokenCount = 0;
   /** @type {number} */
+  #wordCount = 0;
+  /** @type {number} */
   #maxTokens;
   /** @type {number} */
   #timeoutTokens;
@@ -68,6 +70,7 @@ export class SentenceBuffer {
       if (sentence) {
         this.#pendingSentences.push(sentence);
         this.#pendingTokenCount += this.#tokenCount;
+        this.#wordCount += this.#countWords(sentence);
       }
       this.#buffer = this.#buffer.slice(boundaryIndex + 1);
       this.#tokenCount = 0;
@@ -107,6 +110,7 @@ export class SentenceBuffer {
     const text = this.#buffer.trim();
     if (text) {
       this.#onSentence(text);
+      this.#wordCount += this.#countWords(text);
       this.#totalTokensFlushed += this.#tokenCount;
     }
     this.#buffer = "";
@@ -142,20 +146,27 @@ export class SentenceBuffer {
     this.#totalTokensFlushed += this.#pendingTokenCount;
     this.#pendingSentences = [];
     this.#pendingTokenCount = 0;
+    this.#wordCount = 0;
     this.#emitState();
   }
 
   #emitState() {
     if (!this.#eventBus) return;
-    const wordCount = this.#buffer.trim().split(/\s+/).filter(Boolean).length
-      + this.#pendingSentences.join(" ").split(/\s+/).filter(Boolean).length;
     this.#eventBus.emit("buffer-state", {
       modelName: this.#modelName,
       tokenCount: this.#totalTokensFlushed + this.#pendingTokenCount + this.#tokenCount,
-      wordCount,
+      wordCount: this.#wordCount,
       sentencesHeld: this.#pendingSentences.length,
       capped: this.#capped,
     });
+  }
+
+  /**
+   * @param {string} text
+   * @returns {number}
+   */
+  #countWords(text) {
+    return text.split(/\s+/).filter(Boolean).length;
   }
 
   #cap() {
@@ -165,6 +176,7 @@ export class SentenceBuffer {
       if (sentence) {
         this.#pendingSentences.push(sentence);
         this.#pendingTokenCount += this.#tokenCount;
+        this.#wordCount += this.#countWords(sentence);
       }
       this.#buffer = this.#buffer.slice(boundaryIndex + 1);
       this.#tokenCount = 0;

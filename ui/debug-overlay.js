@@ -24,6 +24,10 @@ export class DebugOverlay {
   #visible = false;
   /** @type {(() => void)[]} */
   #unsubs = [];
+  /** @type {ReturnType<typeof setInterval> | null} */
+  #globalInterval = null;
+  /** @type {Orchestrator} */
+  #orchestrator;
 
   /**
    * @param {Object} opts
@@ -51,8 +55,17 @@ export class DebugOverlay {
     modelsContainer.className = "debug-models";
     this.#panel.appendChild(modelsContainer);
 
-    // Attach to orchestrator eventBus changes
-    this.#watchOrchestrator(orchestrator);
+    this.#orchestrator = orchestrator;
+    // Event-driven bus detection — no polling
+    orchestrator.setOnEventBusReady((bus) => {
+      this.#detachBus();
+      this.#attachBus(bus);
+    });
+    // Lightweight interval for global stats only
+    this.#globalInterval = setInterval(() => {
+      this.#updateGlobal(this.#orchestrator);
+    }, 250);
+    window.addEventListener("beforeunload", () => { if (this.#globalInterval) clearInterval(this.#globalInterval); });
 
     document.body.appendChild(this.#root);
     this.#setupKeyboard();
@@ -80,29 +93,7 @@ export class DebugOverlay {
     });
   }
 
-  /**
-   * @param {Orchestrator} orchestrator
-   */
-  #watchOrchestrator(orchestrator) {
-    // Poll for eventBus changes since orchestrator creates a new one per session
-    let lastBus = orchestrator.eventBus;
-    if (lastBus) {
-      this.#attachBus(lastBus);
-    }
 
-    const interval = setInterval(() => {
-      const bus = orchestrator.eventBus;
-      if (bus !== lastBus) {
-        this.#detachBus();
-        if (bus) this.#attachBus(bus);
-        lastBus = bus;
-      }
-      this.#updateGlobal(orchestrator);
-    }, 250);
-
-    // Cleanup on page unload
-    window.addEventListener("beforeunload", () => clearInterval(interval));
-  }
 
   /**
    * @param {SimpleEventBus} bus

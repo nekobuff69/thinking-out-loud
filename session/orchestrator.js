@@ -61,6 +61,10 @@ export class Orchestrator {
   #questionText = "";
   /** @type {import("./event-bus.js").SimpleEventBus | undefined} */
   #eventBus;
+  /** @type {((bus: import("./event-bus.js").SimpleEventBus) => void) | null} */
+  #onEventBusReady = null;
+  /** @type {Map<string, import("../llm/providers/llm-provider.js").LLMProvider>} */
+  #providerCache = new Map();
 
   /**
    * @param {OrchestratorDeps} deps
@@ -94,6 +98,16 @@ export class Orchestrator {
   }
 
   /**
+   * Register a callback that fires each time a new event bus is created.
+   * @param {(bus: import("./event-bus.js").SimpleEventBus) => void} fn
+   * @returns {void}
+   */
+  setOnEventBusReady(fn) {
+    this.#onEventBusReady = fn;
+    if (this.#eventBus) fn(this.#eventBus);
+  }
+
+  /**
    * @param {string} question
    * @param {string} [mode]
    * @returns {Promise<void>}
@@ -111,6 +125,7 @@ export class Orchestrator {
     await this.#ttsEngine.load();
     this.#activeSessions.clear();
     this.#eventBus = new SimpleEventBus();
+    this.#onEventBusReady?.(this.#eventBus);
     this.#sessionData = {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
@@ -190,6 +205,7 @@ export class Orchestrator {
     await this.#ttsEngine.load();
     this.#activeSessions.clear();
     this.#eventBus = new SimpleEventBus();
+    this.#onEventBusReady?.(this.#eventBus);
     this.#sessionData = { ...sessionData, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
 
     // Use stored model data (preserving original voices/pan) for replay,
@@ -236,11 +252,16 @@ export class Orchestrator {
       if (!column) continue;
       column.clear();
 
-      const llmProvider = new OpenAICompatibleProvider({
-        url: model.url,
-        model: model.model,
-        reasoningFormat: /** @type {"separate" | "tagged" | "none"} */ (model.reasoningFormat ?? "separate"),
-      });
+      const cacheKey = `${model.url}|${model.model}|${model.reasoningFormat ?? "separate"}`;
+      let llmProvider = this.#providerCache.get(cacheKey);
+      if (!llmProvider) {
+        llmProvider = new OpenAICompatibleProvider({
+          url: model.url,
+          model: model.model,
+          reasoningFormat: /** @type {"separate" | "tagged" | "none"} */ (model.reasoningFormat ?? "separate"),
+        });
+        this.#providerCache.set(cacheKey, llmProvider);
+      }
 
       const pipeline = new ChannelPipeline({
         model: /** @type {ModelConfig} */ (model),

@@ -34,6 +34,12 @@ npm run build
 npm run preview
 ```
 
+### Debug Overlay
+
+During development or live demos, toggle the debug overlay to see real-time pipeline state:
+- Append `?debug` to the URL, or press `` ` `` / `Ctrl+Shift+D`
+- Shows per-model token rates, buffer state, TTS queue depth, synthesis timing, and error logs
+
 ## Project Structure
 
 - `index.html` — Root HTML + loading spinner element
