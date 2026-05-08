@@ -13,9 +13,11 @@ import { AudioGraph } from "./audio/audio-graph.js";
 
 import { Orchestrator } from "./session/orchestrator.js";
 import { SessionStore } from "./session/storage.js";
+import { DebugOverlay } from "./ui/debug-overlay.js";
 
 import "./styles/global.css";
 import "./styles/top-bar.css";
+import "./ui/debug-overlay.css";
 
 // --- Storage ---
 const store = new SessionStore(config.maxHistorySessions);
@@ -126,6 +128,12 @@ orchestrator.onStateChange((state) => {
 stopBtn.addEventListener("click", () => {
   orchestrator.stop();
 });
+
+// Debug overlay
+const debugOverlay = new DebugOverlay({ orchestrator });
+if (window.location.search.includes("debug")) {
+  debugOverlay.toggle();
+}
 
 promptSelector.onAsk(async (question) => {
   try {

@@ -7,13 +7,14 @@
  * @property {string} voice
  * @property {string} color
  * @property {number} pan
+ * @property {string} reasoningFormat
  */
 
 /**
  * @typedef {Object} TTSConfig
  * @property {string} model
  * @property {number} maxTokens
- * @property {number} sentenceTimeoutTokens
+ * @property {number} sentenceTimeoutTokens - Force-flush threshold per sentence (default: 60)
  */
 
 /**
@@ -43,19 +44,21 @@ export const config = {
       name: "Qwen",
       provider: "lm-studio",
       url: "http://localhost:1234/v1",
-      model: "qwen_qwen3-30b",
+      model: "qwen3.5-9b",
       voice: "af_bella",
       color: "#00ff88",
       pan: -0.7,
+      reasoningFormat: "separate",
     },
     {
-      name: "Nemotron",
+      name: "Gemma",
       provider: "lm-studio",
       url: "http://localhost:1234/v1",
-      model: "nvidia-nemotron-mini",
+      model: "gemma-4-e2b-it",
       voice: "af_heart",
       color: "#ff6644",
       pan: 0.0,
+      reasoningFormat: "separate",
     },
     {
       name: "GPT-OSS",
@@ -65,13 +68,14 @@ export const config = {
       voice: "bm_lewis",
       color: "#44aaff",
       pan: 0.7,
+      reasoningFormat: "separate",
     },
   ],
 
   tts: {
     model: "onnx-community/Kokoro-82M-v1.0-ONNX",
     maxTokens: 200,
-    sentenceTimeoutTokens: 30,
+    sentenceTimeoutTokens: 60,
   },
 
   systemPrompt:

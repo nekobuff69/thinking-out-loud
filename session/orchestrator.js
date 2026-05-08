@@ -1,6 +1,7 @@
 import { healthCheck } from "../llm/health-check.js";
 import { OpenAICompatibleProvider } from "../llm/providers/openai-compatible-provider.js";
 import { ChannelPipeline } from "./channel-pipeline.js";
+import { SimpleEventBus } from "./event-bus.js";
 
 /**
  * @typedef {import("../config.js").ModelConfig} ModelConfig
@@ -18,7 +19,7 @@ import { ChannelPipeline } from "./channel-pipeline.js";
  * @property {TTSConfig} ttsConfig
  * @property {AudioGraph} audioGraph
  * @property {Map<string, ColumnAPI>} columns
- * @property {import("../tts/kokoro-backend.js").KokoroBackend} ttsEngine
+ * @property {import("../tts/tts-engine.js").TTSEngine} ttsEngine
  * @property {SessionStore} storage
  */
 
@@ -38,7 +39,7 @@ export class Orchestrator {
   #audioGraph;
   /** @type {Map<string, ColumnAPI>} */
   #columns;
-  /** @type {import("../tts/kokoro-backend.js").KokoroBackend} */
+  /** @type {import("../tts/tts-engine.js").TTSEngine} */
   #ttsEngine;
   /** @type {((state: string) => void) | null} */
   #onStateChange = null;
@@ -58,6 +59,8 @@ export class Orchestrator {
   #sessionData = null;
   /** @type {string} */
   #questionText = "";
+  /** @type {import("./event-bus.js").SimpleEventBus | undefined} */
+  #eventBus;
 
   /**
    * @param {OrchestratorDeps} deps
@@ -85,6 +88,11 @@ export class Orchestrator {
     return this.#state;
   }
 
+  /** @returns {import("./event-bus.js").SimpleEventBus | undefined} */
+  get eventBus() {
+    return this.#eventBus;
+  }
+
   /**
    * @param {string} question
    * @param {string} [mode]
@@ -102,6 +110,7 @@ export class Orchestrator {
     this.#setState("Loading: downloading TTS model…");
     await this.#ttsEngine.load();
     this.#activeSessions.clear();
+    this.#eventBus = new SimpleEventBus();
     this.#sessionData = {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
@@ -180,6 +189,7 @@ export class Orchestrator {
     this.#setState("Loading: downloading TTS model…");
     await this.#ttsEngine.load();
     this.#activeSessions.clear();
+    this.#eventBus = new SimpleEventBus();
     this.#sessionData = { ...sessionData, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
 
     // Use stored model data (preserving original voices/pan) for replay,
@@ -239,6 +249,7 @@ export class Orchestrator {
         ttsEngine: this.#ttsEngine,
         llmProvider,
         audioGraph: this.#audioGraph,
+        eventBus: this.#eventBus,
         onIdle: () => {
           if (this.#mode === "monologue") {
             this.#advanceMonologue();

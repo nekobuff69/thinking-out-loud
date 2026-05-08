@@ -1,0 +1,92 @@
+.debug-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.debug-panel {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 380px;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.85);
+  color: #e0e0e0;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.debug-header {
+  font-weight: bold;
+  font-size: 13px;
+  margin-bottom: 8px;
+  color: #ffd700;
+  border-bottom: 1px solid #444;
+  padding-bottom: 6px;
+}
+
+.debug-global {
+  margin-bottom: 10px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  color: #90ee90;
+}
+
+.debug-models {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.debug-model-card {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 8px;
+  border-left: 3px solid #666;
+}
+
+.debug-model-name {
+  font-weight: bold;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.debug-progress {
+  color: #87ceeb;
+}
+
+.debug-buffer {
+  color: #dda0dd;
+}
+
+.debug-queue {
+  color: #f0e68c;
+}
+
+.debug-synth {
+  color: #ffa07a;
+}
+
+.debug-errors {
+  margin-top: 4px;
+}
+
+.debug-error-line {
+  color: #ff6b6b;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

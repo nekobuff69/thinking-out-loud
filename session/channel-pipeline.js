@@ -8,6 +8,7 @@ import { TTSPlaybackQueue } from "../tts/playback-queue.js";
  * @typedef {import("../audio/audio-graph.js").AudioGraph} AudioGraph
  * @typedef {import("../tts/tts-engine.js").TTSEngine} TTSEngine
  * @typedef {import("../llm/providers/llm-provider.js").LLMProvider} LLMProvider
+ * @typedef {import("./event-bus.js").SimpleEventBus} SimpleEventBus
  */
 
 /**
@@ -19,6 +20,7 @@ import { TTSPlaybackQueue } from "../tts/playback-queue.js";
  * @property {LLMProvider} llmProvider
  * @property {AudioGraph} audioGraph
  * @property {() => void} [onIdle]
+ * @property {SimpleEventBus} [eventBus]
  */
 
 /**
@@ -53,13 +55,15 @@ export class ChannelPipeline {
   #contentHit = false;
   /** @type {string} */
   #reasoningText = "";
+  /** @type {SimpleEventBus | undefined} */
+  #eventBus;
   /** @type {AbortController | null} */
   #abortController = null;
 
   /**
    * @param {ChannelPipelineDeps} deps
    */
-  constructor({ model, ttsConfig, column, ttsEngine, llmProvider, audioGraph, onIdle }) {
+  constructor({ model, ttsConfig, column, ttsEngine, llmProvider, audioGraph, onIdle, eventBus }) {
     this.#model = model;
     this.#ttsConfig = ttsConfig;
     this.#column = column;
@@ -67,6 +71,7 @@ export class ChannelPipeline {
     this.#llmProvider = llmProvider;
     this.#audioGraph = audioGraph;
     this.#onIdle = onIdle;
+    this.#eventBus = eventBus;
   }
 
   /** Create audio channel and attach waveform to column.
@@ -81,11 +86,16 @@ export class ChannelPipeline {
       ttsEngine: this.#ttsEngine,
       channel: this.#channel,
       voice: this.#model.voice,
-      sentenceGapMs: 200,
+      sentenceGapMs: 50,
+      modelName: this.#model.name,
+      eventBus: this.#eventBus,
       onIdle: () => {
         this.#onIdle?.();
+        this.#emitProgress("done");
       },
     });
+
+    this.#emitProgress("loaded");
   }
 
   /**
@@ -108,10 +118,14 @@ export class ChannelPipeline {
     this.#buffer = new SentenceBuffer({
       maxTokens: this.#ttsConfig.maxTokens,
       timeoutTokens: this.#ttsConfig.sentenceTimeoutTokens,
+      modelName: this.#model.name,
+      eventBus: this.#eventBus,
       onSentence: (text) => {
         this.#queue?.enqueue(text);
       },
     });
+
+    this.#emitProgress("streaming");
 
     return this.#llmProvider.streamReasoning(
       question,
@@ -131,6 +145,7 @@ export class ChannelPipeline {
           if (this.#reasoningText.length === 0) {
             this.setError("No reasoning received");
           }
+          this.#emitProgress("finished");
         },
       },
       combinedSignal
@@ -189,6 +204,7 @@ export class ChannelPipeline {
     if (!this.#contentHit && this.#buffer && !this.#buffer.isCapped) {
       this.#buffer.feed(token);
     }
+    this.#eventBus?.emit("token", { modelName: this.#model.name, token });
   }
 
   /** Soft stop: abort stream, finish current TTS sentence, then silence.
@@ -262,6 +278,14 @@ export class ChannelPipeline {
    */
   setError(message) {
     this.#column.setError(message);
+    this.#eventBus?.emit("pipeline-error", { modelName: this.#model.name, message, timestamp: Date.now() });
+  }
+
+  /**
+   * @param {string} stage
+   */
+  #emitProgress(stage) {
+    this.#eventBus?.emit("pipeline-progress", { modelName: this.#model.name, stage });
   }
 
   #combineAbortSignals(/** @type {(AbortSignal | undefined)[]} */ ...signals) {

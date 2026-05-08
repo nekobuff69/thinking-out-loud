@@ -1,13 +1,18 @@
 /**
  * Accumulates reasoning tokens and flushes complete sentences.
- * Fires onSentence(text) when a sentence boundary is detected
- * or the timeout token threshold is reached.
+ * Bundles two sentences before flushing to amortize TTS synthesis overhead.
+ * Fires onSentence(text) when two sentences are ready, on timeout,
+ * or when the total token cap is reached.
  */
 export class SentenceBuffer {
   /** @type {string} */
   #buffer = "";
   /** @type {number} */
   #tokenCount = 0;
+  /** @type {string[]} */
+  #pendingSentences = [];
+  /** @type {number} */
+  #pendingTokenCount = 0;
   /** @type {number} */
   #maxTokens;
   /** @type {number} */
@@ -18,17 +23,25 @@ export class SentenceBuffer {
   #capped = false;
   /** @type {(text: string) => void} */
   #onSentence;
+  /** @type {string | undefined} */
+  #modelName;
+  /** @type {import("../session/event-bus.js").SimpleEventBus | undefined} */
+  #eventBus;
 
   /**
    * @param {object} opts
    * @param {number} opts.maxTokens - Total token cap before stopping new sentences
    * @param {number} opts.timeoutTokens - Tokens without boundary before forced flush
-   * @param {(text: string) => void} opts.onSentence - Called with each flushed sentence
+   * @param {(text: string) => void} opts.onSentence - Called with each flushed sentence bundle
+   * @param {string} [opts.modelName]
+   * @param {import("../session/event-bus.js").SimpleEventBus} [opts.eventBus]
    */
-  constructor({ maxTokens, timeoutTokens, onSentence }) {
+  constructor({ maxTokens, timeoutTokens, onSentence, modelName, eventBus }) {
     this.#maxTokens = maxTokens;
     this.#timeoutTokens = timeoutTokens;
     this.#onSentence = onSentence;
+    this.#modelName = modelName;
+    this.#eventBus = eventBus;
   }
 
   /** Feed a single token from the stream.
@@ -42,18 +55,9 @@ export class SentenceBuffer {
     this.#tokenCount++;
 
     // Check if we hit the token cap
-    if (this.#totalTokensFlushed + this.#tokenCount >= this.#maxTokens) {
-      // Finish the current sentence (look for boundary to finish naturally)
-      // but mark as capped — no new sentences will start
-      const boundaryIndex = this.#findSentenceBoundary(this.#buffer);
-      if (boundaryIndex >= 0) {
-        const sentence = this.#buffer.slice(0, boundaryIndex + 1).trim();
-        if (sentence) this.#onSentence(sentence);
-        this.#totalTokensFlushed += this.#tokenCount;
-        this.#buffer = "";
-        this.#tokenCount = 0;
-      }
-      this.#capped = true;
+    if (this.#totalTokensFlushed + this.#pendingTokenCount + this.#tokenCount >= this.#maxTokens) {
+      this.#cap();
+      this.#emitState();
       return;
     }
 
@@ -61,20 +65,35 @@ export class SentenceBuffer {
     const boundaryIndex = this.#findSentenceBoundary(this.#buffer);
     if (boundaryIndex >= 0) {
       const sentence = this.#buffer.slice(0, boundaryIndex + 1).trim();
-      if (sentence) this.#onSentence(sentence);
-      this.#totalTokensFlushed += this.#tokenCount;
+      if (sentence) {
+        this.#pendingSentences.push(sentence);
+        this.#pendingTokenCount += this.#tokenCount;
+      }
       this.#buffer = this.#buffer.slice(boundaryIndex + 1);
       this.#tokenCount = 0;
+
+      if (this.#pendingSentences.length >= 2) {
+        this.#flushPending();
+      } else {
+        this.#emitState();
+      }
       return;
     }
 
-    // Timeout: force-flush if buffer exceeds threshold without boundary
+    // Timeout: force-flush if current buffer exceeds threshold without boundary
     if (this.#tokenCount >= this.#timeoutTokens) {
-      const text = this.#buffer.trim();
-      if (text) this.#onSentence(text);
-      this.#totalTokensFlushed += this.#tokenCount;
-      this.#buffer = "";
-      this.#tokenCount = 0;
+      if (this.#pendingSentences.length > 0) {
+        // Flush only completed sentences, keep the current incomplete buffer
+        this.#flushPending();
+      } else {
+        // No completed sentence held, flush the current buffer
+        const text = this.#buffer.trim();
+        if (text) this.#onSentence(text);
+        this.#totalTokensFlushed += this.#tokenCount;
+        this.#buffer = "";
+        this.#tokenCount = 0;
+        this.#emitState();
+      }
     }
   }
 
@@ -82,6 +101,9 @@ export class SentenceBuffer {
    * @returns {void}
    */
   flush() {
+    if (this.#pendingSentences.length > 0) {
+      this.#flushPending();
+    }
     const text = this.#buffer.trim();
     if (text) {
       this.#onSentence(text);
@@ -89,6 +111,7 @@ export class SentenceBuffer {
     }
     this.#buffer = "";
     this.#tokenCount = 0;
+    this.#emitState();
   }
 
   /** Whether the token cap has been reached.
@@ -96,6 +119,60 @@ export class SentenceBuffer {
    */
   get isCapped() {
     return this.#capped;
+  }
+
+  /** @returns {string[]} */
+  get pendingSentences() {
+    return [...this.#pendingSentences];
+  }
+
+  /** @returns {number} */
+  get pendingTokenCount() {
+    return this.#pendingTokenCount;
+  }
+
+  /** @returns {number} */
+  get currentTokenCount() {
+    return this.#tokenCount;
+  }
+
+  #flushPending() {
+    const text = this.#pendingSentences.join(" ");
+    if (text) this.#onSentence(text);
+    this.#totalTokensFlushed += this.#pendingTokenCount;
+    this.#pendingSentences = [];
+    this.#pendingTokenCount = 0;
+    this.#emitState();
+  }
+
+  #emitState() {
+    if (!this.#eventBus) return;
+    const wordCount = this.#buffer.trim().split(/\s+/).filter(Boolean).length
+      + this.#pendingSentences.join(" ").split(/\s+/).filter(Boolean).length;
+    this.#eventBus.emit("buffer-state", {
+      modelName: this.#modelName,
+      tokenCount: this.#totalTokensFlushed + this.#pendingTokenCount + this.#tokenCount,
+      wordCount,
+      sentencesHeld: this.#pendingSentences.length,
+      capped: this.#capped,
+    });
+  }
+
+  #cap() {
+    const boundaryIndex = this.#findSentenceBoundary(this.#buffer);
+    if (boundaryIndex >= 0) {
+      const sentence = this.#buffer.slice(0, boundaryIndex + 1).trim();
+      if (sentence) {
+        this.#pendingSentences.push(sentence);
+        this.#pendingTokenCount += this.#tokenCount;
+      }
+      this.#buffer = this.#buffer.slice(boundaryIndex + 1);
+      this.#tokenCount = 0;
+    }
+    if (this.#pendingSentences.length > 0) {
+      this.#flushPending();
+    }
+    this.#capped = true;
   }
 
   // Common English abbreviations that end with '.' but aren't sentence boundaries
