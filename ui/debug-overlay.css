@@ -63,19 +63,38 @@
   margin-bottom: 4px;
 }
 
-.debug-progress {
+.debug-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.debug-row-label {
+  color: #888;
+  flex-shrink: 0;
+  min-width: 56px;
+}
+
+.debug-row-value {
+  color: #ddd;
+  flex: 1;
+  min-width: 0;
+}
+
+.debug-row-value--progress {
   color: #87ceeb;
 }
 
-.debug-buffer {
+.debug-row-value--buffer {
   color: #dda0dd;
 }
 
-.debug-queue {
+.debug-row-value--queue {
   color: #f0e68c;
 }
 
-.debug-synth {
+.debug-row-value--synth {
   color: #ffa07a;
 }
 

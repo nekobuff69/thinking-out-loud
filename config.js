@@ -74,12 +74,12 @@ export const config = {
 
 	tts: {
 		model: "onnx-community/Kokoro-82M-v1.0-ONNX",
-		maxTokens: 200,
+		maxTokens: 12800,
 		sentenceTimeoutTokens: 60,
 	},
 
 	systemPrompt:
-		"You are a critical thinker exploring deep questions. Think through the problem step by step, considering multiple perspectives. Show your reasoning process honestly.",
+		"You are a critical thinker exploring deep questions. Think through the problem step by step, considering multiple perspectives. Show your reasoning process honestly. 500 tokens max",
 
 	maxHistorySessions: 20,
 };

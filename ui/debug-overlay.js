@@ -4,6 +4,29 @@
  */
 
 /**
+ * Human-readable labels for pipeline progress stages.
+ * Maps LLM/TTS internal events to user-facing descriptions.
+ */
+const PROGRESS_LABELS = Object.freeze({
+  loaded: "🚀 Start",
+  streaming: "🔤 Thinking",
+  finished: "✅ Done thinking",
+  done: "🔇 Finished",
+});
+
+/**
+ * Human-readable labels for TTS playback queue states.
+ */
+const QUEUE_LABELS = Object.freeze({
+  Idle: "Idle",
+  Synthesizing: "🎙️ Generating voice",
+  Playing: "🔊 Speaking",
+  Gapping: "⏸ Pausing",
+  Paused: "⏸ Paused",
+  Stopped: "⏹ Stopped",
+});
+
+/**
  * Togglable debug overlay that observes pipeline state via the event bus.
  * Does not import pipeline modules directly — only listens to events.
  */
@@ -16,8 +39,8 @@ export class DebugOverlay {
   #panel;
   /** @type {Map<string, HTMLElement>} */
   #modelCards = new Map();
-  /** @type {Map<string, { tokens: number, lastTime: number }>} */
-  #tokenMetrics = new Map();
+  /** @type {Map<string, number>} */
+  #tokenCounts = new Map();
   /** @type {HTMLElement | null} */
   #globalStats = null;
   /** @type {boolean} */
@@ -93,8 +116,6 @@ export class DebugOverlay {
     });
   }
 
-
-
   /**
    * @param {SimpleEventBus} bus
    */
@@ -114,7 +135,7 @@ export class DebugOverlay {
     for (const unsub of this.#unsubs) unsub();
     this.#unsubs = [];
     this.#modelCards.clear();
-    this.#tokenMetrics.clear();
+    this.#tokenCounts.clear();
     const modelsContainer = this.#panel.querySelector(".debug-models");
     if (modelsContainer) modelsContainer.innerHTML = "";
   }
@@ -123,12 +144,8 @@ export class DebugOverlay {
    * @param {{ modelName: string, token: string }} data
    */
   #onToken(data) {
-    let m = this.#tokenMetrics.get(data.modelName);
-    if (!m) {
-      m = { tokens: 0, lastTime: Date.now() };
-      this.#tokenMetrics.set(data.modelName, m);
-    }
-    m.tokens++;
+    const count = this.#tokenCounts.get(data.modelName) ?? 0;
+    this.#tokenCounts.set(data.modelName, count + 1);
   }
 
   /**
@@ -136,20 +153,31 @@ export class DebugOverlay {
    */
   #onBufferState(data) {
     const card = this.#ensureCard(data.modelName);
-    const el = card.querySelector(".debug-buffer");
+    const el = card.querySelector(".debug-row-value--buffer");
     if (el) {
-      el.textContent = `Buffer: ${data.tokenCount} tok / ~${data.wordCount} words | held: ${data.sentencesHeld} | ${data.capped ? "CAPPED" : "open"}`;
+      if (data.wordCount === 0 && data.tokenCount === 0) {
+        el.textContent = "—";
+      } else {
+        let text = `${data.wordCount} words`;
+        if (data.capped) text += " · ⚠️ Max";
+        el.textContent = text;
+      }
     }
   }
 
   /**
-   * @param {{ modelName: string, depth: number, state: string }} data
+   * @param {{ modelName: string, depth: number, state: keyof typeof QUEUE_LABELS }} data
    */
   #onQueueState(data) {
     const card = this.#ensureCard(data.modelName);
-    const el = card.querySelector(".debug-queue");
+    const el = card.querySelector(".debug-row-value--queue");
     if (el) {
-      el.textContent = `Queue: ${data.state} | depth: ${data.depth}`;
+      const label = QUEUE_LABELS[data.state] ?? String(data.state);
+      if (data.depth > 0) {
+        el.textContent = `${label} · ${data.depth} waiting`;
+      } else {
+        el.textContent = label;
+      }
     }
   }
 
@@ -158,20 +186,22 @@ export class DebugOverlay {
    */
   #onSynthTiming(data) {
     const card = this.#ensureCard(data.modelName);
-    const el = card.querySelector(".debug-synth");
+    const el = card.querySelector(".debug-row-value--synth");
     if (el) {
-      el.textContent = `Synth: ${data.timingMs}ms`;
+      const seconds = (data.timingMs / 1000).toFixed(2);
+      el.textContent = `${seconds}s`;
     }
   }
 
   /**
-   * @param {{ modelName: string, stage: string }} data
+   * @param {{ modelName: string, stage: keyof typeof PROGRESS_LABELS }} data
    */
   #onProgress(data) {
     const card = this.#ensureCard(data.modelName);
-    const el = card.querySelector(".debug-progress");
+    const el = card.querySelector(".debug-row-value--progress");
     if (el) {
-      el.textContent = `Progress: ${data.stage}`;
+      const label = PROGRESS_LABELS[data.stage] ?? String(data.stage);
+      el.textContent = label;
     }
   }
 
@@ -198,14 +228,15 @@ export class DebugOverlay {
    */
   #updateGlobal(orchestrator) {
     if (!this.#globalStats) return;
-    const now = Date.now();
-    let tokRates = [];
-    for (const [name, m] of this.#tokenMetrics) {
-      const elapsed = (now - m.lastTime) / 1000;
-      const rate = elapsed > 0 ? (m.tokens / elapsed).toFixed(1) : "0";
-      tokRates.push(`${name}: ${rate} tok/s (${m.tokens})`);
+    const lines = [];
+    for (const [name, count] of this.#tokenCounts) {
+      lines.push(`${name} ${count} tokens`);
     }
-    this.#globalStats.textContent = `Session: ${orchestrator.state} | ${tokRates.join(" | ")}`;
+    if (lines.length === 0) {
+      this.#globalStats.textContent = `Session: ${orchestrator.state}`;
+    } else {
+      this.#globalStats.textContent = `Session: ${orchestrator.state} · ${lines.join(" · ")}`;
+    }
   }
 
   /**
@@ -221,10 +252,10 @@ export class DebugOverlay {
     card.className = "debug-model-card";
     card.innerHTML = `
       <div class="debug-model-name">${modelName}</div>
-      <div class="debug-progress">Progress: —</div>
-      <div class="debug-buffer">Buffer: —</div>
-      <div class="debug-queue">Queue: —</div>
-      <div class="debug-synth">Synth: —</div>
+      <div class="debug-row"><span class="debug-row-label">Progress</span><span class="debug-row-value debug-row-value--progress">—</span></div>
+      <div class="debug-row"><span class="debug-row-label">Buffer</span><span class="debug-row-value debug-row-value--buffer">—</span></div>
+      <div class="debug-row"><span class="debug-row-label">Queue</span><span class="debug-row-value debug-row-value--queue">—</span></div>
+      <div class="debug-row"><span class="debug-row-label">Synth</span><span class="debug-row-value debug-row-value--synth">—</span></div>
       <div class="debug-errors"></div>
     `;
     container?.appendChild(card);

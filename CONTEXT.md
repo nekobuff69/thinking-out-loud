@@ -198,21 +198,23 @@ Lightweight observer for cross-module state observation. Pipeline modules emit e
 
 ```js
 const bus = new SimpleEventBus();
-bus.on("token", (data) => { ... });          // { modelName, token }
-bus.on("buffer-state", (data) => { ... });   // { modelName, tokenCount, wordCount, sentencesHeld, capped }
-bus.on("queue-state", (data) => { ... });    // { modelName, depth, state }
-bus.on("synth-timing", (data) => { ... });   // { modelName, timingMs }
+bus.on("token", (data) => { ... });             // { modelName, token }
+bus.on("buffer-state", (data) => { ... });      // { modelName, tokenCount, wordCount, capped }
+bus.on("queue-state", (data) => { ... });       // { modelName, depth, state }
+bus.on("synth-timing", (data) => { ... });      // { modelName, timingMs }
 bus.on("pipeline-progress", (data) => { ... }); // { modelName, stage }
-bus.on("pipeline-error", (data) => { ... }); // { modelName, message, timestamp }
+bus.on("pipeline-error", (data) => { ... });    // { modelName, message, timestamp }
 bus.emit("token", { modelName: "Qwen", token: "h" });
 ```
 
 ### DebugOverlay (`ui/debug-overlay.js`)
 
-Togglable diagnostics panel. Enabled via `?debug` query parameter or `` ` `` / `Ctrl+Shift+D` keyboard shortcut.
+Togglable diagnostics panel. Enabled via `` ` `` / `Ctrl+Shift+D` keyboard shortcut.
 
-- **Per-model:** token rate, buffer state (tokens + word count, sentences held), queue state, synthesis timing, pipeline progress, error logs
-- **Global:** session state, aggregate token rates
+See `docs/debug-overlay-reference.md` for complete event-to-display mapping.
+
+- **Per-model:** buffer state (word count, cap status), queue state (with waiting count), synthesis timing (in seconds), pipeline progress, error logs
+- **Global:** session state, per-model token counts
 - Styled as a semi-transparent fixed panel that does not interfere with the main UI
 
 ### AudioGraph (`audio/audio-graph.js`)
