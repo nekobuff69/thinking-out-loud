@@ -29,7 +29,7 @@ async def test_synthesize():
         await ws.send(json.dumps({
             "type": "synthesize",
             "text": "Hello world",
-            "voice": "alba",
+            "voice": "alba-mackenna/casual.wav",
         }))
 
         pcm_frames = []
@@ -102,7 +102,7 @@ async def test_empty_text():
         await ws.send(json.dumps({
             "type": "synthesize",
             "text": "",
-            "voice": "alba",
+            "voice": "alba-mackenna/casual.wav",
         }))
 
         async for message in ws:

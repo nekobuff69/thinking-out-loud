@@ -184,7 +184,7 @@ class KyutaiTTSServer:
 
         # Prepare the script entries from text
         entries = self.tts_model.prepare_script([text])
-        attributes = [self.tts_model.make_condition_attributes([voice_path])]
+        attributes = [self.tts_model.make_condition_attributes([voice_path], cfg_coef=1.0)]
 
         # Bridge between generation thread and async loop.
         # asyncio.Queue is not thread-safe, so we use call_soon_threadsafe
@@ -197,8 +197,10 @@ class KyutaiTTSServer:
             """Called for each generated audio frame during synthesis.
             Runs in the generation thread; pushes PCM to the async queue
             via call_soon_threadsafe."""
+            # Add time dimension: (batch, codebooks) → (batch, codebooks, 1)
+            frame_with_time = mx.array(frame)[:, :, None]
             pcm_frame = np.array(
-                self.tts_model.mimi.decode_step(frame)
+                self.tts_model.mimi.decode_step(frame_with_time)
             ).astype(np.float32)
             loop.call_soon_threadsafe(
                 pcm_queue.put_nowait,

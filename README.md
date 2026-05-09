@@ -64,9 +64,9 @@ npm run dev       # → http://localhost:5173
 7. Within ~2s of the first tokens, all 3 voices begin speaking:
    | Model | Voice | Pan | Color |
    |---|---|---|---|
-   | Qwen | `alba` | left (-0.7) | `#00ff88` |
-   | Gemma | `baya` | center (0.0) | `#ff6644` |
-   | GPT-OSS | `daniel` | right (+0.7) | `#44aaff` |
+   | Qwen | `alba-mackenna/casual.wav` | left (-0.7) | `#00ff88` |
+   | Gemma | `alba-mackenna/merchant.wav` | center (0.0) | `#ff6644` |
+   | GPT-OSS | `alba-mackenna/announcer.wav` | right (+0.7) | `#44aaff` |
 8. Live waveforms animate per model column
 9. Session auto-saves to history — click to replay
 
