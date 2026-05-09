@@ -11,7 +11,7 @@
 - **Runtime:** Browser (ES modules)
 - **Build:** Vite dev server + production bundler
 - **LLM Inference:** OpenAI-compatible local providers (LM Studio, etc.) via `fetch()` + SSE
-- **TTS:** Kokoro-82M via `kokoro-js` (official wrapper around `StyleTextToSpeech2Model`, quantized ONNX in browser IndexedDB)
+- **TTS:** Kyutai DSM TTS via local Python+MLX server (`moshi-mlx`), streamed over WebSocket. Mimi codec, 0.75B–1.6B params, Apple Silicon optimized.
 - **Audio:** Web Audio API (AudioContext, GainNode, StereoPannerNode, AnalyserNode)
 - **Storage:** localStorage with adapter seam (in-memory for tests)
 - **Styling:** Separate CSS files in `styles/` and `ui/`, imported as ES modules
@@ -44,10 +44,10 @@ index.html ──► index.js (bootstraps everything)
 │  └── session/memory-storage-adapter.js  Test adapter        │
 ├─────────────────────────────────────────────────────────────┤
 │  TTS Layer (text → audio synthesis + playback)              │
-│  ├── tts/kokoro-backend.js    kokoro-js (StyleTextToSpeech2)│
-│  ├── tts/tts-engine.js        Abstract interface            │
-│  ├── tts/sentence-buffer.js   Token → sentence boundaries   │
-│  └── tts/playback-queue.js    Sentence → audio queue        │
+│  ├── tts/kyutai-backend.js    WebSocket client → MLX server │
+│  ├── tts/tts-engine.js        Streaming interface (onChunk) │
+│  ├── tts/text-chunker.js      Optional word accumulator     │
+│  └── server/tts-server.py     Python+MLX WebSocket server   │
 ├─────────────────────────────────────────────────────────────┤
 │  Audio Layer (Web Audio routing + visualization)            │
 │  ├── audio/audio-graph.js     AudioContext + channels       │
@@ -79,7 +79,7 @@ index.js ──► orchestrator.start(question, mode)
   │
   ▼
 Orchestrator:
-  1. Load TTS model (KokoroBackend.load)
+  1. Ensure TTS server is running (WebSocket ping)
   2. Health-check all LLM providers (/models ping)
   3. For each reachable model:
      • Create ChannelPipeline
@@ -87,9 +87,9 @@ Orchestrator:
   4. Create an `LLMProvider` per model (`OpenAICompatibleProvider`)
   5. Fire all LLM streams concurrently via `LLMProvider.streamReasoning()`
      • Tokens → ChannelPipeline.feedToken() → Column.appendToken()
-     • Sentence boundaries → SentenceBuffer (bundles 2 sentences) → TTSPlaybackQueue.enqueue()
-     • Pre-synthesis: next sentence is synthesized during current playback
-     • TTS synthesis → AudioGraph channel.play() → waveform animates
+     • ChannelPipeline debounces text and sends to KyutaiBackend → WebSocket → TTS server
+     • Server streams back PCM chunks incrementally
+     • AudioGraph channel.playStream() appends PCM → AudioBufferSourceNodes → waveform animates
      • State events → EventBus → DebugOverlay (when enabled)
   5. When all streams end + all TTS idle → save session → Done
 ```
@@ -105,8 +105,7 @@ orchestrator.replay(sessionData)
   ▼
 For each stored model reasoning:
   • Create fresh ChannelPipeline + Channel
-  • ChannelPipeline.drainText(storedReasoning)  (feeds text with visual delay)
-  • SentenceBuffer → TTSPlaybackQueue → AudioGraph (same as live)
+  • ChannelPipeline.drainText(storedReasoning)  (feeds text with visual delay, same TTS streaming path)
 ```
 
 ## Key Module Interfaces
@@ -121,9 +120,9 @@ new ChannelPipeline({ model, ttsConfig, column, ttsEngine, llmProvider, audioGra
   .startStream(systemPrompt, question, signal?)  // → Promise (LLM → TTS)
   .drainText(text)                    // Replay stored reasoning
   .feedToken(token)                   // Manual token injection
-  .softStop()                         // Abort stream + stop queue
-  .flush()                            // Flush remaining buffer
-  .pause() / .resume()                // Control TTS queue
+  .softStop()                         // Abort stream + stop TTS immediately
+  .setTextChunker(chunker)            // Optional TextChunker for prosody tuning
+  .pause() / .resume()                // Control TTS flow (monologue sequencing)
   .isActive / .isCapped / .reasoningText  // Getters
 ```
 
@@ -153,30 +152,24 @@ await provider.streamReasoning(
 
 `llm/llm-stream.js` preserves a backward-compatible `streamReasoning()` wrapper.
 
-### TTSPlaybackQueue (`tts/playback-queue.js`)
+### TTSEngine (`tts/tts-engine.js`)
 
-Explicit state machine with **pre-synthesis**: while sentence N plays, sentence N+1 is synthesized on the main thread and stored in `#nextBuffer` for gap-free playback.
+Streaming interface for token-level TTS. Replaces the old pull-based `synthesize()` with push-based chunk delivery.
 
+```js
+load() → Promise<void>
+startStream(text, voice, onAudioChunk) → void
+stop() → void
+destroy() → void
 ```
-State machine: Idle → Synthesizing → Playing → Gapping → Idle
-                ↑_________________________________________↓
-                (with pre-synthesis happening during Playing)
 
-.enqueue(text)   // Add sentence to queue; kicks off pre-synthesis
-.pause()         // Hold current position (pre-synthesis continues)
-.resume()        // Continue from pause
-.stop()          // Soft stop: finish current, discard rest
-.isActive        // Any pending or in-flight work?
-.isPaused        // Currently paused?
-.state           // Current state name
-.depth           // Queue depth + pre-baked buffer count
-```
+`onAudioChunk(Float32Array pcm, sampleRate)` fires as each audio frame is decoded by the server. The audio layer appends chunks to a ring buffer and plays continuously.
 
 **Key behaviors:**
-- First sentence always incurs synthesis delay
-- Every subsequent sentence plays immediately from pre-baked buffer
-- Sentence gap reduced to **50ms**
-- Pre-synthesis continues even while paused (supports Monologue seamless transitions)
+- First audio begins after a handful of text tokens + fixed model delay (~80ms)
+- No sentence bundling — text streams directly to the server
+- No inter-sentence gaps — continuous PCM playback
+- `stop()` aborts the current generation and closes the stream
 
 ### SessionStore (`session/storage.js`)
 
@@ -199,9 +192,8 @@ Lightweight observer for cross-module state observation. Pipeline modules emit e
 ```js
 const bus = new SimpleEventBus();
 bus.on("token", (data) => { ... });             // { modelName, token }
-bus.on("buffer-state", (data) => { ... });      // { modelName, tokenCount, wordCount, capped }
-bus.on("queue-state", (data) => { ... });       // { modelName, depth, state }
-bus.on("synth-timing", (data) => { ... });      // { modelName, timingMs }
+bus.on("tts-chunk", (data) => { ... });         // { modelName, bytesReceived }
+bus.on("tts-first-chunk", (data) => { ... });   // { modelName, latencyMs }
 bus.on("pipeline-progress", (data) => { ... }); // { modelName, stage }
 bus.on("pipeline-error", (data) => { ... });    // { modelName, message, timestamp }
 bus.emit("token", { modelName: "Qwen", token: "h" });
@@ -213,7 +205,7 @@ Togglable diagnostics panel. Enabled via `` ` `` / `Ctrl+Shift+D` keyboard short
 
 See `docs/debug-overlay-reference.md` for complete event-to-display mapping.
 
-- **Per-model:** buffer state (word count, cap status), queue state (with waiting count), synthesis timing (in seconds), pipeline progress, error logs
+- **Per-model:** TTS connection state, time-to-first-chunk (ms), pipeline progress, error logs
 - **Global:** session state, per-model token counts
 - Styled as a semi-transparent fixed panel that does not interfere with the main UI
 
@@ -224,7 +216,7 @@ Shared AudioContext with per-model channels and automatic ducking.
 ```
 new AudioGraph()
   .getContext()           // Lazy AudioContext
-  .createChannel(pan)     // { play(buffer, onEnd), analyser, gain, stopAll }
+  .createChannel(pan)     // { play(buffer, onEnd), playStream(onChunk), analyser, gain, stopAll }
   .clearChannels()        // Disconnect all, stop audio
   .destroy()              // Close AudioContext
   .enableTabResume()      // Handle visibilitychange
@@ -244,9 +236,9 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
   │         │           │
   │         │           └─► (health-check providers)
   │         │
-  │         └─► (download TTS model, show spinner)
+  │         └─► (connect to TTS server via WebSocket ping)
   │
-  └─── Stop ──► Done ──► Idle (soft stop: abort streams, finish current TTS, silence)
+  └─── Stop ──► Done ──► Idle (soft stop: abort streams, stop TTS immediately)
 ```
 
 ## File Inventory
@@ -267,15 +259,16 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `styles/global.css` | CSS reset, variables, animations (spinner, pulse) | Shallow (style) |
 | `styles/top-bar.css` | Header bar layout | Shallow (style) |
 | `session/orchestrator.js` | Session state coordination | Deep |
-| `session/channel-pipeline.js` | Per-model pipeline (buffer→queue→channel) | Deep |
+| `session/channel-pipeline.js` | Per-model pipeline (LLM tokens → TTS streaming → audio channel) | Deep |
 | `session/event-bus.js` | Observable state events (pub-sub) | Shallow |
 | `session/storage.js` | Session persistence with adapter seam | Deep |
 | `session/local-storage-adapter.js` | localStorage wrapper | Shallow |
 | `session/memory-storage-adapter.js` | In-memory adapter for tests | Shallow |
-| `tts/kokoro-backend.js` | kokoro-js TTS backend (StyleTextToSpeech2Model + resampling) | Deep |
-| `tts/tts-engine.js` | Abstract TTS interface | Shallow (interface) |
-| `tts/sentence-buffer.js` | Token accumulation + two-sentence bundling + boundary detection | Deep |
-| `tts/playback-queue.js` | TTS state machine with pre-synthesis (6 explicit states) | Deep |
+| `tts/kyutai-backend.js` | WebSocket client for local MLX TTS server (auto-reconnect, event emission) | Deep |
+| `server/tts-server.py` | Python+MLX WebSocket server with Mimi codec | Deep |
+| `server/requirements.txt` | Python server dependencies (moshi-mlx, websockets) | Shallow (config) |
+| `tts/tts-engine.js` | Abstract streaming TTS interface (load/startStream/stop/destroy) | Shallow (interface) |
+| `tts/text-chunker.js` | Optional lightweight word accumulator (fallback for prosody tuning) | Shallow |
 | `audio/audio-graph.js` | Web Audio routing + ducking | Deep |
 | `audio/waveform.js` | Canvas visualization from AnalyserNode | Deep |
 | `llm/llm-stream.js` | Backward-compat wrapper around provider | Shallow |
@@ -290,7 +283,7 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `vite-env.d.ts` | Vite/CSS module type declarations | Shallow (types) |
 | `.gitignore` | Ignored files (node_modules, .env, scratch) | Shallow (config) |
 | `.env` | Legacy CLI script vars (not read by browser app) | Shallow (config) |
-| `test/` | Node test runner suites (35 tests, 8 suites) | Shallow (test) |
+| `test/` | Node test runner suites (64 tests, 15 suites) | Shallow (test) |
 | `ui/debug-overlay.js` | Togglable pipeline diagnostics panel | Deep |
 | `ui/debug-overlay.css` | Debug overlay styling | Shallow (style) |
 
@@ -310,23 +303,23 @@ npm test
 
 | File | Tests | What it covers |
 |---|---|---|
-| `sentence-buffer.test.js` | 9 | Two-sentence bundling, total-token cap, timeout flush, per-sentence reset |
 | `health-check.test.js` | 4 | URL construction with/without trailing slashes, fetch errors |
 | `llm-stream.test.js` | 4 | Endpoint construction with/without trailing slashes |
 | `openai-compatible-provider.test.js` | 9 | Separate/tagged/none reasoning formats, URL construction, retry, abort |
 | `orchestrator.test.js` | 1 | stop() → Idle transition after manual stop |
-| `channel-pipeline.test.js` | 1 | Empty LLM stream → setError on column |
-| `playback-queue.test.js` | 7 | Pre-synthesis, gap-free playback, paused pre-synthesis, soft stop |
+| `channel-pipeline.test.js` | 5 | Empty LLM stream detection, TTS streaming path, TextChunker integration, mono/pause/resume |
+| `kyutai-backend.test.js` | 12 | WebSocket connection, streaming, PCM chunk ordering, reconnect, error handling |
+| `audio-graph-stream.test.js` | 5 | playStream PCM playback, scheduling, ducking, stop |
+| `text-chunker.test.js` | 16 | Punctuation/timeout/max-words flush, no-premature-flush, disabled punctuation
 
 ### Testable modules (for new tests)
 
 - `llm/llm-stream.js` — Mock `fetch` with ReadableStream SSE responses
 - `llm/providers/openai-compatible-provider.js` — Mock `fetch` with SSE; test reasoningFormat modes
-- `tts/playback-queue.js` — Mock TTS engine and channel
+- `tts/kyutai-backend.js` — Mock WebSocket server; test chunk delivery and reconnection
 - `session/channel-pipeline.js` — Mock all dependencies
 - `session/storage.js` — Inject MemoryStorageAdapter
 - `session/event-bus.js` — Pure logic, no mocks needed
-- `tts/sentence-buffer.js` — Pure logic, no mocks needed
 - `llm/health-check.js` — Mock global `fetch`
 
 ## Known Extension Points

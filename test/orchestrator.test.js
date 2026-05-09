@@ -15,6 +15,7 @@ describe("Orchestrator", () => {
       clearChannels: () => {},
       createChannel: () => ({
         play: () => {},
+        playStream: () => ({ stop: () => {} }),
         analyser: {},
         gain: {},
         stopAll: () => {},

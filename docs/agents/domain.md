@@ -26,11 +26,11 @@ Single-context repo:
 │   └── 001-deepen-module-architecture.md
 ├── ui/          (prompt-selector, mode-toggle, column, history + CSS)
 ├── session/     (orchestrator, channel-pipeline, storage + adapters)
-├── tts/         (kokoro-backend, tts-engine, sentence-buffer, playback-queue)
+├── tts/         (kyutai-backend, tts-engine, text-chunker)
 ├── audio/       (audio-graph, waveform)
 ├── llm/         (llm-stream, health-check)
 ├── styles/      (global.css, top-bar.css)
-└── test/        (5 suites, 15 tests)
+└── test/        (15 suites, 64 tests)
 ```
 
 ## Use the glossary's vocabulary

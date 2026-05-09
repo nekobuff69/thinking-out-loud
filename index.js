@@ -8,7 +8,7 @@ import { createPromptSelector } from "./ui/prompt-selector.js";
 import { createModeToggle } from "./ui/mode-toggle.js";
 import { createHistory } from "./ui/history.js";
 import { createColumn } from "./ui/column.js";
-import { KokoroBackend } from "./tts/kokoro-backend.js";
+import { KyutaiBackend } from "./tts/kyutai-backend.js";
 import { AudioGraph } from "./audio/audio-graph.js";
 
 import { Orchestrator } from "./session/orchestrator.js";
@@ -76,7 +76,7 @@ historyBtn.addEventListener("click", () => {
 // --- Audio + TTS ---
 const audioGraph = new AudioGraph();
 audioGraph.enableTabResume();
-const ttsEngine = new KokoroBackend(config.tts.model, audioGraph);
+const ttsEngine = new KyutaiBackend({ wsUrl: config.tts.wsUrl });
 
 // --- Orchestrator ---
 const orchestrator = new Orchestrator({

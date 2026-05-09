@@ -1,6 +1,7 @@
 /**
  * @typedef {Object} AudioGraphChannel
  * @property {(buffer: AudioBuffer, onEnd?: () => void) => AudioBufferSourceNode} play
+ * @property {(streamFn: (onChunk: (pcm: Float32Array, sampleRate: number) => void) => (() => void)) => { stop: () => void }} playStream
  * @property {AnalyserNode} analyser
  * @property {GainNode} gain
  * @property {() => void} stopAll
@@ -98,7 +99,84 @@ export class AudioGraph {
       }
     };
 
-    return { play, analyser, gain, stopAll };
+    /**
+     * Stream PCM chunks for continuous playback via a ring-buffer approach.
+     *
+     * @param {(onChunk: (pcm: Float32Array, sampleRate: number) => void) => (() => void)} streamFn
+     *   - Receives onChunk callback to deliver Float32Array PCM frames
+     *   - Returns a cleanup function called on stop
+     * @returns {{ stop: () => void }}
+     */
+    const playStream = (streamFn) => {
+      this.#activeCount++;
+      this.#updateDucking();
+
+      const sources = new Set();
+      let stopped = false;
+      /** @type {(() => void) | null} */
+      let cleanupFn = null;
+
+      /**
+       * Deliver a PCM chunk for playback.
+       * Creates an AudioBuffer and schedules an AudioBufferSourceNode.
+       * @param {Float32Array} pcm - Float32 PCM samples
+       * @param {number} sampleRate - Sample rate of the PCM data
+       */
+      const onChunk = (pcm, sampleRate) => {
+        if (stopped) return;
+
+        // Create an AudioBuffer from PCM data
+        let buffer;
+        if (sampleRate === ctx.sampleRate) {
+          buffer = ctx.createBuffer(1, pcm.length, sampleRate);
+          buffer.getChannelData(0).set(pcm);
+        } else {
+          // Resample by creating at source rate then letting the context handle it?
+          // For simplicity, create at source rate — the AudioContext will resample.
+          buffer = ctx.createBuffer(1, pcm.length, sampleRate);
+          buffer.getChannelData(0).set(pcm);
+        }
+
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(gain);
+        source.start();
+        sources.add(source);
+
+        source.onended = () => {
+          sources.delete(source);
+          if (sources.size === 0 && stopped) {
+            this.#activeCount = Math.max(0, this.#activeCount - 1);
+            this.#updateDucking();
+          }
+        };
+      };
+
+      // Start the stream by calling the stream function with our onChunk callback
+      cleanupFn = streamFn(onChunk);
+
+      return {
+        stop: () => {
+          stopped = true;
+          // Call the cleanup function from the stream
+          if (cleanupFn) {
+            try { cleanupFn(); } catch {}
+            cleanupFn = null;
+          }
+          // Stop all active sources
+          for (const source of sources) {
+            try { source.stop(); } catch {}
+            sources.delete(source);
+          }
+          if (sources.size === 0) {
+            this.#activeCount = Math.max(0, this.#activeCount - 1);
+            this.#updateDucking();
+          }
+        },
+      };
+    };
+
+    return { play, playStream, analyser, gain, stopAll };
   }
 
   get activeCount() {

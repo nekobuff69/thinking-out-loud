@@ -2,6 +2,7 @@ import { healthCheck } from "../llm/health-check.js";
 import { OpenAICompatibleProvider } from "../llm/providers/openai-compatible-provider.js";
 import { ChannelPipeline } from "./channel-pipeline.js";
 import { SimpleEventBus } from "./event-bus.js";
+import { TextChunker } from "../tts/text-chunker.js";
 
 /**
  * @typedef {import("../config.js").ModelConfig} ModelConfig
@@ -121,8 +122,13 @@ export class Orchestrator {
     this.#audioGraph.clearChannels();
     this.#setState("Loading");
 
-    this.#setState("Loading: downloading TTS model…");
-    await this.#ttsEngine.load();
+    this.#setState("Loading: connecting to TTS server…");
+    try {
+      await this.#ttsEngine.load();
+    } catch (err) {
+      this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.wsUrl || "ws://localhost:8765"}`);
+      return;
+    }
     this.#activeSessions.clear();
     this.#eventBus = new SimpleEventBus();
     this.#onEventBusReady?.(this.#eventBus);
@@ -201,8 +207,13 @@ export class Orchestrator {
     this.#audioGraph.clearChannels();
     this.#setState("Loading");
 
-    this.#setState("Loading: downloading TTS model…");
-    await this.#ttsEngine.load();
+    this.#setState("Loading: connecting to TTS server…");
+    try {
+      await this.#ttsEngine.load();
+    } catch (err) {
+      this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.wsUrl || "ws://localhost:8765"}`);
+      return;
+    }
     this.#activeSessions.clear();
     this.#eventBus = new SimpleEventBus();
     this.#onEventBusReady?.(this.#eventBus);
@@ -280,6 +291,17 @@ export class Orchestrator {
       });
 
       pipeline.createChannel();
+
+      // Wire TextChunker if enabled in config
+      if (this.#ttsConfig.useTextChunker) {
+        const chunker = new TextChunker({
+          maxWords: 8,
+          timeoutMs: 150,
+          flushOnPunctuation: true,
+          onFlush: () => pipeline.flushTts(),
+        });
+        pipeline.setTextChunker(chunker);
+      }
 
       // In Monologue mode, pause all queues except the first
       if (this.#mode === "monologue" && index > 0) {

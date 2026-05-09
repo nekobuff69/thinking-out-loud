@@ -1,5 +1,7 @@
 node_modules/
 .env
+__pycache__/
+*.pyc
 sub-agent-prompts/
 legacy-test-run-data/
 .scratch/

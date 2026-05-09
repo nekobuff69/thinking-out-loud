@@ -12,9 +12,10 @@
 
 /**
  * @typedef {Object} TTSConfig
- * @property {string} model
- * @property {number} maxTokens
+ * @property {string} wsUrl - WebSocket URL for Kyutai TTS server
+ * @property {number} maxTokens - Soft token cap for reasoning text
  * @property {number} sentenceTimeoutTokens - Force-flush threshold per sentence (default: 60)
+ * @property {boolean} useTextChunker - Enable optional TextChunker for prosody tuning (default: false)
  */
 
 /**
@@ -45,7 +46,7 @@ export const config = {
 			provider: "lm-studio",
 			url: "http://localhost:1234/v1",
 			model: "gpt-oss-20b",
-			voice: "af_bella",
+			voice: "alba",
 			color: "#00ff88",
 			pan: -0.7,
 			reasoningFormat: "separate",
@@ -55,7 +56,7 @@ export const config = {
 			provider: "lm-studio",
 			url: "http://localhost:1234/v1",
 			model: "gpt-oss-20b",
-			voice: "af_heart",
+			voice: "baya",
 			color: "#ff6644",
 			pan: 0.0,
 			reasoningFormat: "separate",
@@ -65,7 +66,7 @@ export const config = {
 			provider: "lm-studio",
 			url: "http://localhost:1234/v1",
 			model: "gpt-oss-20b",
-			voice: "bm_lewis",
+			voice: "daniel",
 			color: "#44aaff",
 			pan: 0.7,
 			reasoningFormat: "separate",
@@ -73,9 +74,10 @@ export const config = {
 	],
 
 	tts: {
-		model: "onnx-community/Kokoro-82M-v1.0-ONNX",
-		maxTokens: 12800,
+		wsUrl: "ws://localhost:8765",
+		maxTokens: 200,
 		sentenceTimeoutTokens: 60,
+		useTextChunker: false,
 	},
 
 	systemPrompt:

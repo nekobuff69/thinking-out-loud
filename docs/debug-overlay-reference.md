@@ -11,9 +11,8 @@ Interactive diagnostics panel for the Thinking Out Loud app. Press `` ` `` or `C
 │  Session: Thinking · Qwen 45 tokens           │  ← Global bar (green)
 │──────────────────────────────────────────────────│
 │  Qwen                                        │  ← Model card
-│  📖 11 words · ⚠️ Max                     │  ← Buffer line
-│  🎙️ Generating voice · 2 waiting          │  ← Queue line
-│  ⏱️ 0.85 s                                │  ← Synth line
+│  🔤 Thinking                                │  ← Pipeline progress
+│  ⚡ TTS: 0.42s · Audio: 15 chunk(s) 12 kB  │  ← TTS latency + audio stats
 │  [12:34:56] Error: connection refused       │  ← Errors
 │──────────────────────────────────────────────────│
 │  Gemma                                       │  ← Second model card
@@ -27,7 +26,7 @@ Panel floats in the top-right corner, monospace dark theme, 380px wide.
 
 ## Global Bar
 
-Shows the overall session state and per-model token counts. No token-per-second rates (they fluctuate too much to be meaningful).
+Shows the overall session state and per-model token counts.
 
 ```
 Session: Thinking · Qwen 45 tokens, Gemma 32 tokens, OSS 18 tokens
@@ -38,98 +37,40 @@ Session: Thinking · Qwen 45 tokens, Gemma 32 tokens, OSS 18 tokens
 | `Session: {state}` | `orchestrator.state` — one of: `Idle`, `Loading`, `Checking`, `Thinking`, `Speaking`, `Finished` |
 | `{name} {count} tokens` | Cumulative token count from `event-bus.on("token")` events per model |
 
-When no tokens have arrived:
-```
-Session: Idle
-```
-
-When multiple models have emitted tokens:
-```
-Session: Thinking · Qwen 120 tokens, Gemma 95 tokens, OSS 44 tokens
-```
-
 ---
 
 ## Per-model Card
 
-Each model gets its own card showing pipeline internals from the LLM stream through TTS playback.
+Each model gets its own card showing pipeline internals.
 
 ### Progress line
 
-Maps to `pipeline-progress` events from `ChannelPipeline`. Describes what the model is doing from a user perspective.
+Maps to `pipeline-progress` events from `ChannelPipeline`.
 
 | Internal Stage | Display | Meaning |
 |---|---|---|
 | `loaded` | `🚀 Start` | Audio channel created, ready to go |
 | `streaming` | `🔤 Thinking` | LLM is streaming reasoning text |
 | `finished` | `✅ Done thinking` | LLM finished sending text |
-| `done` | `🔇 Finished` | All text spoken, TTS queue empty |
+| `done` | `🔇 Finished` | All audio playback complete |
 
-Example card lifecycle for a single model:
-```
-🚀 Start
-🔤 Thinking
-🔤 Thinking        ← stream continues
-✅ Done thinking   ← LLM stream ended
-🔇 Finished       ← TTS finished playing
-```
+### TTS Latency line
 
-### Buffer line
-
-Maps to `buffer-state` events from `SentenceBuffer`. Shows words accumulated in the text buffer before TTS. The buffer bundles two sentences at a time to amortize TTS synthesis overhead.
+Maps to `tts-first-chunk` event from `KyutaiBackend`.
 
 | Display | Meaning |
 |---|---|
-| `—` | Nothing buffered (initial state or just flushed) |
-| `11 words` | 11 words accumulated in the buffer |
-| `11 words · ⚠️ Max` | Same, but token cap reached — model hit its limit |
+| `⚡ TTS: 0.42s` | 420ms from first token sent to server until first PCM chunk received |
+| `—` | No first chunk received yet |
 
-Fields mapping:
-- `wordCount` — human-readable word count (shown)
-- `tokenCount` — raw token count (not shown separately; implied by word count)
-- `sentencesHeld` — sentences held back by the two-sentence bundler (not shown; already implied by word count)
-- `capped` — whether the max token limit was hit (shown as `· ⚠️ Max`)
+### Audio line
 
-The `—` is shown when `tokenCount === 0` and `wordCount === 0`.
-
-### Queue line
-
-Maps to `queue-state` events from `TTSPlaybackQueue`. Shows the TTS playback state machine with 6 states. Pre-synthesis means the next sentence is synthesized *while* the current one plays, for gap-free audio.
-
-| Internal State | Display | Meaning |
-|---|---|---|
-| `Idle` | `Idle` | Queue empty, no work pending |
-| `Synthesizing` | `🎙️ Generating voice` | TTS engine computing audio (you're waiting) |
-| `Playing` | `🔊 Speaking` | Audio flowing through speakers |
-| `Gapping` | `⏸ Pausing` | Brief 50ms gap between sentences |
-| `Paused` | `⏸ Paused` | Manually paused (Monologue mode) |
-| `Stopped` | `⏹ Stopped` | Soft stop in progress |
-
-Depth (how many items queued ahead):
-- Shown as `· N waiting` appended to the state label
-- Omitted when depth is 0 (nothing waiting)
-- `depth` = `queue.length + (nextBuffer ? 1 : 0)` — count of sentences in the queue plus the pre-synthesized buffer
-
-Examples:
-```
-Idle                          ← empty queue, nothing happening
-🎙️ Generating voice         ← computing first sentence audio
-🔊 Speaking                  ← playing, no queue ahead
-🔊 Speaking · 2 waiting     ← playing, 2 more sentences queued
-⏸ Pausing · 1 waiting      ← gap between sentences, 1 synthesized ahead
-⏹ Stopped                  ← soft stop requested
-```
-
-### Synth line
-
-Maps to `synth-timing` events from `TTSPlaybackQueue`. Shows the time taken to synthesize the most recent sentence.
+Maps to `tts-chunk` events from `KyutaiBackend`. Cumulative chunk count and bytes.
 
 | Display | Meaning |
 |---|---|
-| `⏱️ 0.85 s` | 850ms to synthesize the last sentence |
-| `⏱️ 1.20 s` | 1200ms to synthesize |
-
-Source: `timingMs` from the event, converted to seconds with 2 decimal places.
+| `Audio: 15 chunk(s) 12 kB` | 15 PCM chunks received, ~12KB total audio data |
+| `—` | No audio chunks received yet |
 
 ### Errors line
 
@@ -146,28 +87,24 @@ Errors are red text, oldest entries are dropped when more than 5 accumulate.
 
 ## State Flow (Full Lifecycle)
 
-Here's how a card looks through a complete thinking session:
-
 ```
-Phase        Progress          Buffer              Queue                   Synth
-─────────────────────────────────────────────────────────────────────────────────
-Setup        🚀 Start          —                   Idle                    
-LLM starts   🔤 Thinking       —                   Idle                    
-Text flowing 🔤 Thinking      11 words            🎙️ Generating voice     ⏱️ 0.30 s
-Audio starts 🔤 Thinking      23 words            🔊 Speaking             ⏱️ 0.42 s
-Queued       🔤 Thinking      35 words            🔊 Speaking · 3 waiting  ⏱️ 0.35 s
-LLM done     ✅ Done thinking  45 words            🔊 Speaking · 1 waiting  ⏱️ 0.28 s
-All done     🔇 Finished      45 words            Idle                    
-Completed    🔇 Finished      —                   Idle                    
+Phase        Progress         TTS Latency     Audio
+───────────────────────────────────────────────────────────
+Setup        🚀 Start         —               —
+LLM starts   🔤 Thinking      —               —
+Text flowing 🔤 Thinking      —               —
+First audio  🔤 Thinking      ⚡ TTS: 0.42s   Audio: 1 chunk(s) 2 kB
+Streaming    🔤 Thinking      ⚡ TTS: 0.42s   Audio: 15 chunk(s) 12 kB
+LLM done     ✅ Done thinking  ⚡ TTS: 0.42s   Audio: 45 chunk(s) 36 kB
+All done     🔇 Finished      ⚡ TTS: 0.42s   Audio: 45 chunk(s) 36 kB
 ```
 
 ### Interpretation Tips
 
-- **Healthy stream:** `Buffer` shows growing word count, `Queue` says `Speaking · N waiting`, `Synth` is consistent
-- **Slow TTS:** `Synth` ms climbing, `Queue` stuck on `Generating voice` for a long time
-- **Backlog:** `Queue` says `Speaking · 5+ waiting` — synthesis can't keep up with text
-- **Model capped:** `Buffer` shows `· ⚠️ Max` — model hit its token limit
-- **Done:** `Progress` says `🔇 Finished`, `Queue` says `Idle`, `Buffer` says `—`
+- **Healthy stream:** `TTS Latency` is sub-second, `Audio` chunk count is climbing
+- **Slow TTS:** `TTS Latency` > 2s — server may be CPU-bound, try `--quantize 8`
+- **No audio:** `TTS Latency` stays `—` — TTS server may be unreachable
+- **Capped:** Text stops streaming but synthesis continues for remaining audio
 
 ---
 
@@ -184,7 +121,7 @@ The panel is also enabled automatically when the URL has `?debug` query paramete
 
 ## Event Bus Reference
 
-All data flows through `SimpleEventBus` events. Here's the complete event map:
+All data flows through `SimpleEventBus` events.
 
 ### `token`
 Emitted by `ChannelPipeline.feedToken()` for every LLM token.
@@ -193,39 +130,23 @@ Emitted by `ChannelPipeline.feedToken()` for every LLM token.
 { modelName: "Qwen", token: "the" }
 ```
 
-- Consumed by DebugOverlay for the global token count
-- Consumed by SentenceBuffer for text accumulation
-
-### `buffer-state`
-Emitted by `SentenceBuffer` on every sentence boundary detection, timeout flush, or token cap.
+### `tts-first-chunk`
+Emitted by `KyutaiBackend` when the first PCM frame arrives from the server.
 
 ```js
-{ modelName: "Qwen", tokenCount: 45, wordCount: 11, sentencesHeld: 2, capped: false }
+{ modelName: "Qwen", latencyMs: 420 }
 ```
 
-- `tokenCount` — total tokens in the buffer (flushed + pending + current)
-- `wordCount` — human-readable word count (split by whitespace)
-- `sentencesHeld` — number of completed sentences waiting in the two-sentence bundler
-- `capped` — true if the max token cap was reached
+- `latencyMs` — time from `startStream()` call to first PCM chunk received
 
-### `queue-state`
-Emitted by `TTSPlaybackQueue` on every state change.
+### `tts-chunk`
+Emitted by `KyutaiBackend` for each PCM frame received.
 
 ```js
-{ modelName: "Qwen", depth: 2, state: "Playing" }
+{ modelName: "Qwen", bytesReceived: 2048 }
 ```
 
-- `depth` — total items in queue (`pending.length + (nextBuffer ? 1 : 0)`)
-- `state` — one of: `Idle`, `Synthesizing`, `Playing`, `Gapping`, `Paused`, `Stopped`
-
-### `synth-timing`
-Emitted by `TTSPlaybackQueue` after each successful synthesis.
-
-```js
-{ modelName: "Qwen", timingMs: 850 }
-```
-
-- `timingMs` — time in milliseconds from synthesis start to audio buffer ready
+- `bytesReceived` — raw byte count of the Float32Array PCM data
 
 ### `pipeline-progress`
 Emitted by `ChannelPipeline` on lifecycle stage changes.
