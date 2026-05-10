@@ -470,14 +470,39 @@ export class ChannelPipeline {
 
   /**
    * Resume sending text to TTS.
-   * Flushes accumulated unsent buffer.
+   * Re-feeds all accumulated reasoning text through TTS since
+   * the pipeline was paused (tokens went to #reasoningText but
+   * not to #unsentBuffer while paused).
    */
   resume() {
     this.#paused = false;
-    // Flush accumulated text
+
+    // While paused, feedToken() accumulated text in #reasoningText
+    // but skipped #feedTts (and therefore #unsentBuffer). On resume,
+    // we need to send the full reasoning text delta to TTS.
+    //
+    // Compute what hasn't been sent yet: the portion of reasoningText
+    // that wasn't already TTS'd (everything, since paused pipelines
+    // never sent anything to TTS).
+
+    // Ensure stream is open (may not be if paused before first token)
+    this.#ensureTtsStream();
+
+    // Send the full accumulated reasoning text as a single chunk.
+    // The TTS server appends entries incrementally — sending the same
+    // text twice is safe because the first time (during pause) never
+    // happened.
+    if (this.#reasoningText.length > 0 && this.#ttsStream && !this.#isCapped && !this.#contentHit) {
+      this.#ttsStream.sendText(this.#reasoningText);
+      this.#eventBus?.emit("tts-text-sent", {
+        modelName: this.#model.name,
+        chars: this.#reasoningText.length,
+        words: this.#reasoningText.split(/\s+/).filter(Boolean).length,
+      });
+    }
+
+    // Also flush any pending unsentBuffer (may be empty, but check anyway)
     if (this.#unsentBuffer.length > 0) {
-      // Ensure stream is open (was paused before first text sent)
-      this.#ensureTtsStream();
       this.#flushBuffer();
     }
   }
