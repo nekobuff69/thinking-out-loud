@@ -143,15 +143,22 @@ export class KyutaiBackend extends TTSEngine {
           if (this.#streamMode === 'stream') {
             this.#streamHandleClosed = false;
             ws.send(JSON.stringify({ type: "open_stream", voice: this.#activeStreamState.voice }));
-          } else {
+          } else if (this.#activeStreamState.text) {
             ws.send(JSON.stringify({
               type: "synthesize",
-              text: this.#activeStreamState.text || "",
+              text: this.#activeStreamState.text,
               voice: this.#activeStreamState.voice,
             }));
+          } else {
+            // Missing text on reconnect — fire error instead of sending empty
+            this.#currentOnError?.("TTS reconnect: no text to synthesize");
+            this.#clearCurrentStream();
           }
           this.#firstChunkEmitted = false;
           this.#streamStartTime = Date.now();
+
+          // Emit reconnect event after resubscribing
+          this.#eventBus?.emit("tts-reconnect", { modelName: this.#modelName });
         }
 
         this.#onReconnect?.();
@@ -343,13 +350,19 @@ export class KyutaiBackend extends TTSEngine {
     const self = this;
     return {
       sendText(text) {
-        if (self.#streamMode !== 'stream' || self.#streamHandleClosed) return;
+        if (self.#streamMode !== 'stream' || self.#streamHandleClosed) {
+          console.warn(`[KyutaiBackend] sendText called on closed stream (model: ${self.#modelName})`);
+          return;
+        }
         if (self.#ws && self.#ws.readyState === WebSocket.OPEN) {
           self.#ws.send(JSON.stringify({ type: "text", data: text }));
         }
       },
       close() {
-        if (self.#streamMode !== 'stream' || self.#streamHandleClosed) return;
+        if (self.#streamMode !== 'stream' || self.#streamHandleClosed) {
+          console.warn(`[KyutaiBackend] close() called on already-closed stream (model: ${self.#modelName})`);
+          return;
+        }
         self.#streamHandleClosed = true;
         if (self.#ws && self.#ws.readyState === WebSocket.OPEN) {
           self.#ws.send(JSON.stringify({ type: "close_stream" }));

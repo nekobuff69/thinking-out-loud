@@ -413,6 +413,64 @@ describe("KyutaiBackend", () => {
       assert.strictEqual(chunks.length, 1);
     });
 
+    it("sendText warns when called after close", async () => {
+      const backend = new KyutaiBackend();
+      await backend.load();
+
+      const ws = /** @type {MockWebSocket} */ ((/** @type {any} */ (backend)._testWs));
+      const handle = backend.openStream("alba", {
+        onAudioChunk: () => {},
+        onDone: () => {},
+        onError: () => {},
+      });
+
+      // Close the stream
+      handle.close();
+
+      // Capture console.warn
+      /** @type {string[]} */
+      const warns = [];
+      const origWarn = console.warn;
+      console.warn = (...args) => warns.push(args.join(" "));
+      try {
+        handle.sendText("dropped text");
+      } finally {
+        console.warn = origWarn;
+      }
+
+      assert.ok(warns.length > 0, "should produce a warning");
+      assert.match(warns[0], /sendText.*closed stream/i, "warning should mention closed stream");
+    });
+
+    it("close warns when called on already-closed stream", async () => {
+      const backend = new KyutaiBackend();
+      await backend.load();
+
+      const ws = /** @type {MockWebSocket} */ ((/** @type {any} */ (backend)._testWs));
+      const handle = backend.openStream("alba", {
+        onAudioChunk: () => {},
+        onDone: () => {},
+        onError: () => {},
+      });
+
+      // Close once
+      handle.close();
+
+      // Capture console.warn
+      /** @type {string[]} */
+      const warns = [];
+      const origWarn = console.warn;
+      console.warn = (...args) => warns.push(args.join(" "));
+      try {
+        handle.close();
+      } finally {
+        console.warn = origWarn;
+      }
+
+      assert.ok(warns.length > 0, "should produce a warning on double close");
+      assert.match(warns[0], /close.*already-closed/i, "warning should mention already-closed");
+    });
+
     it("sendText works after reconnect for openStream", async () => {
       // Use ReconnectingMockWS for reconnect test
       class ReconnectingMockWS {
@@ -708,6 +766,71 @@ describe("KyutaiBackend", () => {
         assert.ok(newWs.sentMessages.length >= 1, "re-sent after reconnect");
         const reSent = JSON.parse(newWs.sentMessages[newWs.sentMessages.length - 1]);
         assert.strictEqual(reSent.type, "synthesize");
+      }
+    });
+
+    it("emits tts-reconnect event after reconnect", async () => {
+      // @ts-ignore
+      globalThis.WebSocket = ReconnectingMockWS;
+
+      const { SimpleEventBus } = await import("../session/event-bus.js");
+      const bus = new SimpleEventBus();
+      /** @type {Array<{ modelName: string }>} */
+      const reconnectEvents = [];
+      bus.on("tts-reconnect", (data) => reconnectEvents.push(data));
+
+      const backend = new KyutaiBackend({
+        wsUrl: "ws://localhost:8765",
+        eventBus: bus,
+        modelName: "Qwen",
+        reconnectBaseDelay: 1,
+      });
+      await backend.load();
+
+      // Start a stream so activeStreamState exists
+      backend.startStream("test text", "alba", () => {});
+
+      const ws = /** @type {ReconnectingMockWS} */ (backend._testWs);
+      ws._simulateDrop();
+      await new Promise((r) => setTimeout(r, 50));
+
+      assert.strictEqual(reconnectEvents.length, 1);
+      assert.strictEqual(reconnectEvents[0].modelName, "Qwen");
+    });
+
+    it("calls onError on reconnect when synthesize text is missing", async () => {
+      // @ts-ignore
+      globalThis.WebSocket = ReconnectingMockWS;
+
+      const backend = new KyutaiBackend({ wsUrl: "ws://localhost:8765", reconnectBaseDelay: 1 });
+      await backend.load();
+
+      /** @type {string[]} */
+      const errors = [];
+      // Call startStream with empty text — the initial call sends empty string,
+      // but on reconnect the guard should fire onError instead of sending empty
+      backend.startStream("", "alba", () => {}, {
+        onError: (msg) => errors.push(msg),
+      });
+
+      const ws = /** @type {ReconnectingMockWS} */ (backend._testWs);
+      ws._simulateDrop();
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Should have called onError with a missing-text message
+      assert.ok(errors.length >= 1, "should have called onError on reconnect with missing text");
+      assert.ok(errors.some(e => e.includes("text")), "error message should mention missing text");
+
+      // Verify no empty synthesize was sent on reconnect
+      const newWs = /** @type {ReconnectingMockWS} */ (backend._testWs);
+      if (newWs) {
+        const synthesizeMsgs = newWs.sentMessages
+          .map(m => JSON.parse(m))
+          .filter(m => m.type === "synthesize");
+        // No synthesize messages after reconnect for empty text
+        for (const msg of synthesizeMsgs) {
+          assert.ok(msg.text, "should not send empty text on reconnect");
+        }
       }
     });
   });

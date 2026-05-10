@@ -88,6 +88,13 @@ export class ChannelPipeline {
   /** @type {boolean} */
   #paused = false;
 
+  // Replay synthesis guard — prevents double invocation of #synthesizeReplay
+  /** @type {boolean} */
+  #replaySynthesisActive = false;
+
+  /** @type {(() => void) | null} */
+  #reconnectUnsub = null;
+
   /** @type {import("../tts/text-chunker.js").TextChunker | undefined} */
   #textChunker;
 
@@ -248,6 +255,15 @@ export class ChannelPipeline {
     // Open audio stream channel
     this.#audioStream = this.#channel.openStream();
 
+    // Listen for backend reconnect to re-initialize audio stream
+    if (this.#eventBus && !this.#reconnectUnsub) {
+      this.#reconnectUnsub = this.#eventBus.on("tts-reconnect", () => {
+        if (this.#audioStream && this.#channel) {
+          this.#audioStream = this.#channel.openStream();
+        }
+      });
+    }
+
     // Open TTS backend stream
     const handle = /** @type {import("../tts/kyutai-backend.js").KyutaiBackend} */ (this.#ttsEngine)
       .openStream(this.#model.voice, {
@@ -300,6 +316,7 @@ export class ChannelPipeline {
   #flushAndClose() {
     this.#flushBuffer();
     this.#ttsStream?.close();
+    this.#ttsStreamOpened = false;
   }
 
   /**
@@ -357,7 +374,7 @@ export class ChannelPipeline {
       }
     }
 
-    this.#flushTtsReplay();
+    this.#synthesizeReplay();
     this.#emitProgress("finished");
   }
 
@@ -370,11 +387,18 @@ export class ChannelPipeline {
   }
 
   /**
-   * Replay path: flush unsent buffer to legacy TTS.
+   * Replay path: terminal synthesis. Sends accumulated text to legacy TTS
+   * via single-shot `startStream(fullText)`. Guarded against double invocation.
+   * @throws {Error} if called while replay synthesis is already active
    */
-  #flushTtsReplay() {
+  #synthesizeReplay() {
+    if (this.#replaySynthesisActive) {
+      throw new Error("synthesizeReplay already active — double invocation prevented");
+    }
     if (this.#unsentBuffer.length === 0) return;
     if (!this.#channel) return;
+
+    this.#replaySynthesisActive = true;
 
     const fullText = this.#reasoningText;
     const voice = this.#model.voice;
@@ -391,11 +415,13 @@ export class ChannelPipeline {
         onChunk,
         {
           onDone: () => {
+            this.#replaySynthesisActive = false;
             this.#ttsActive = false;
             this.#emitProgress("done");
             this.#onIdle?.();
           },
           onError: (msg) => {
+            this.#replaySynthesisActive = false;
             this.#ttsActive = false;
             this.setError(msg);
           },
@@ -417,13 +443,12 @@ export class ChannelPipeline {
   softStop() {
     this.#abortController?.abort();
 
-    // Close streaming TTS session
+    // Close streaming TTS session (close stream handle, stop audio, null refs)
+    // Do NOT destroy the backend — orchestrator owns backend lifecycle.
     this.#ttsStream?.close();
     this.#audioStream?.stop();
 
-    // Destroy backend (closes WebSocket)
-    this.#ttsEngine.destroy();
-
+    this.#cleanupReconnectListener();
     this.#ttsActive = false;
     this.#ttsStream = null;
     this.#audioStream = null;
@@ -524,6 +549,14 @@ export class ChannelPipeline {
    */
   #emitProgress(stage) {
     this.#eventBus?.emit("pipeline-progress", { modelName: this.#model.name, stage });
+  }
+
+  /** Clean up tts-reconnect listener. */
+  #cleanupReconnectListener() {
+    if (this.#reconnectUnsub) {
+      this.#reconnectUnsub();
+      this.#reconnectUnsub = null;
+    }
   }
 
   #combineAbortSignals(/** @type {(AbortSignal | undefined)[]} */ ...signals) {

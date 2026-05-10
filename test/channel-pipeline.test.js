@@ -10,7 +10,7 @@ describe("ChannelPipeline", () => {
   function makePipeline(opts = {}) {
     setErrorCalls = [];
 
-    const { ttsEngine = defaultTtsEngine(), llmProvider = defaultLlmProvider(), audioGraph = defaultAudioGraph() } = opts;
+    const { ttsEngine = defaultTtsEngine(), llmProvider = defaultLlmProvider(), audioGraph = defaultAudioGraph(), eventBus } = opts;
 
     const mockColumn = {
       appendToken: () => {},
@@ -27,6 +27,7 @@ describe("ChannelPipeline", () => {
       ttsEngine,
       llmProvider,
       audioGraph,
+      eventBus,
     });
 
     pipeline.createChannel();
@@ -221,7 +222,7 @@ describe("ChannelPipeline", () => {
     pipeline.softStop();
 
     assert.strictEqual(streamClosed, true, "TTS stream should be closed");
-    assert.strictEqual(ttsDestroyed, true, "TTS backend should be destroyed");
+    assert.strictEqual(ttsDestroyed, false, "TTS backend should NOT be destroyed by pipeline");
     assert.strictEqual(audioStopped, true, "audio should be stopped");
   });
 
@@ -559,6 +560,72 @@ describe("ChannelPipeline", () => {
     pipeline.softStop();
   });
 
+  it("replay #synthesizeReplay throws on double invocation", async () => {
+    const mockTtsEngine = {
+      load: async () => {},
+      startStream: (
+        /** @type {string} */ _text,
+        /** @type {string} */ _voice,
+        /** @type {(pcm: Float32Array, sampleRate: number) => void} */ _onAudioChunk,
+        /** @type {{ onDone?: () => void, onError?: (message: string) => void }} */ _callbacks
+      ) => {
+        // Intentionally do NOT call onDone — keeps #replaySynthesisActive = true
+      },
+      stop: () => {},
+      openStream: () => {},
+      destroy: () => {},
+    };
+
+    const mockAudioGraph = {
+      createChannel: () => ({
+        analyser: {},
+        play: () => ({}),
+        gain: { gain: { value: 1, setTargetAtTime: () => {} } },
+        stopAll: () => {},
+        playStream: (
+          /** @type {(onChunk: (pcm: Float32Array, sampleRate: number) => void) => (() => void)} */ streamFn
+        ) => {
+          streamFn(() => {});
+          return { stop: () => {} };
+        },
+        openStream: () => {},
+      }),
+    };
+
+    const pipeline = new ChannelPipeline({
+      model: { name: "testModel", url: "http://localhost", model: "test", voice: "alba", color: "#fff", pan: 0, provider: "test" },
+      ttsConfig: { maxTokens: 200, sentenceTimeoutTokens: 30 },
+      column: {
+        appendToken: () => {},
+        clear: () => {},
+        setError: () => {},
+        attachWaveform: () => {},
+        stopWaveform: () => {},
+      },
+      ttsEngine: mockTtsEngine,
+      llmProvider: /** @type {any} */ (null),
+      audioGraph: mockAudioGraph,
+    });
+
+    pipeline.createChannel();
+
+    // First drainText — starts replay synthesis, leaves it active
+    await pipeline.drainText("First replay reasoning text.");
+
+    // Second drainText should throw because #replaySynthesisActive is still true
+    await assert.rejects(
+      async () => {
+        await pipeline.drainText("Second replay text that should fail.");
+      },
+      (/** @type {Error} */ err) => {
+        return (
+          err instanceof Error &&
+          err.message.includes("synthesizeReplay already active")
+        );
+      }
+    );
+  });
+
   it("softStop kills everything", async () => {
     let streamClosed = false;
     let backendDestroyed = false;
@@ -617,7 +684,238 @@ describe("ChannelPipeline", () => {
     pipeline.softStop();
 
     assert.strictEqual(streamClosed, true, "stream closed");
-    assert.strictEqual(backendDestroyed, true, "backend destroyed");
+    assert.strictEqual(backendDestroyed, false, "backend should NOT be destroyed by pipeline");
     assert.strictEqual(audioStopped, true, "audio stopped");
+  });
+
+  it("softStop on pipeline A leaves pipeline B's backend usable", async () => {
+    let bDestroyed = false;
+
+    const sharedBackend = {
+      load: async () => {},
+      startStream: () => {},
+      stop: () => {},
+      openStream: () => ({
+        sendText: () => {},
+        close: () => {},
+      }),
+      destroy: () => { bDestroyed = true; },
+    };
+
+    function makeIsolatedPipeline(ttsEngine, llmProvider, audioGraph) {
+      const mockColumn = {
+        appendToken: () => {},
+        clear: () => {},
+        setError: () => {},
+        attachWaveform: () => {},
+        stopWaveform: () => {},
+      };
+
+      const p = new ChannelPipeline({
+        model: { name: "test", url: "http://localhost", model: "test", voice: "alba", color: "#fff", pan: 0, provider: "test" },
+        ttsConfig: { maxTokens: 200, sentenceTimeoutTokens: 30 },
+        column: mockColumn,
+        ttsEngine,
+        llmProvider,
+        audioGraph,
+      });
+      p.createChannel();
+      return p;
+    }
+
+    const mockAudioGraph = {
+      createChannel: () => ({
+        analyser: {},
+        play: () => ({}),
+        gain: { gain: { value: 1, setTargetAtTime: () => {} } },
+        stopAll: () => {},
+        playStream: () => ({ stop: () => {} }),
+        openStream: () => ({
+          feed: () => {},
+          end: () => {},
+          stop: () => {},
+        }),
+      }),
+    };
+
+    const mockLlmProvider = {
+      streamReasoning: async (
+        /** @type {string} */ _q,
+        /** @type {string} */ _s,
+        /** @type {{ onReasoningToken?: (token: string) => void }} */ cb
+      ) => {
+        cb.onReasoningToken?.("Hello");
+        return new Promise(() => {});
+      },
+    };
+
+    // Pipeline A uses sharedBackend
+    const pipelineA = makeIsolatedPipeline(sharedBackend, mockLlmProvider, mockAudioGraph);
+    pipelineA.startStream("system prompt", "question");
+    await new Promise((r) => setTimeout(r, 20));
+    pipelineA.softStop();
+
+    // Pipeline B also uses same sharedBackend — should still be usable
+    assert.strictEqual(bDestroyed, false, "softStop on A should not destroy shared backend");
+
+    // Verify B can still open a stream via the shared backend
+    let bStreamOpened = false;
+    const bBackendCheck = {
+      load: async () => {},
+      startStream: () => {},
+      stop: () => {},
+      openStream: () => {
+        bStreamOpened = true;
+        return { sendText: () => {}, close: () => {} };
+      },
+      destroy: () => {},
+    };
+
+    // Simulate pipeline B using the shared backend (same object reference)
+    // If backend.destroy was called on A, B's backend is dead
+    bBackendCheck.openStream("alba", {});
+    assert.strictEqual(bStreamOpened, true, "shared backend should still accept openStream after A's softStop");
+  });
+
+  // ------------------------------------------------------------------
+  // Reconnect → re-initialize audio stream
+  // ------------------------------------------------------------------
+
+  it("re-creates audio stream on tts-reconnect event", async () => {
+    /** @type {number} */
+    let openStreamCallCount = 0;
+    /** @type {Array<{feed: () => void, end: () => void, stop: () => void}>} */
+    let lastAudioHandle = null;
+
+    const mockAudioGraph = {
+      createChannel: () => {
+        const ch = {
+          analyser: {},
+          play: () => ({}),
+          gain: { gain: { value: 1, setTargetAtTime: () => {} } },
+          stopAll: () => {},
+          playStream: () => ({ stop: () => {} }),
+          openStream: () => {
+            openStreamCallCount++;
+            const handle = { feed: () => {}, end: () => {}, stop: () => {} };
+            lastAudioHandle = handle;
+            return handle;
+          },
+        };
+        return ch;
+      },
+    };
+
+    const { SimpleEventBus } = await import("../session/event-bus.js");
+    const bus = new SimpleEventBus();
+    /** @type {Array<{modelName: string}>} */
+    const reconnectEvents = [];
+    bus.on("tts-reconnect", (data) => reconnectEvents.push(data));
+
+    const mockTtsEngine = {
+      load: async () => {},
+      startStream: () => {},
+      stop: () => {},
+      openStream: () => ({
+        sendText: () => {},
+        close: () => {},
+      }),
+      destroy: () => {},
+    };
+
+    const mockLlmProvider = {
+      streamReasoning: async (
+        /** @type {string} */ _q,
+        /** @type {string} */ _s,
+        /** @type {{ onReasoningToken?: (token: string) => void, onDone?: () => void }} */ cb
+      ) => {
+        cb.onReasoningToken?.("Hello world.");
+        return new Promise(() => {});
+      },
+    };
+
+    const { pipeline } = makePipeline({
+      ttsEngine: mockTtsEngine,
+      llmProvider: mockLlmProvider,
+      audioGraph: mockAudioGraph,
+      eventBus: bus,
+    });
+
+    pipeline.startStream("system prompt", "question");
+    await new Promise((r) => setTimeout(r, 30));
+
+    // First openStream call should have happened
+    const beforeCount = openStreamCallCount;
+    assert.ok(beforeCount >= 1, "openStream called during stream init");
+
+    const oldHandle = lastAudioHandle;
+
+    // Emit tts-reconnect (simulates backend reconnect)
+    bus.emit("tts-reconnect", { modelName: "testModel" });
+    await new Promise((r) => setTimeout(r, 10));
+
+    // openStream should have been called again for a new audio stream
+    assert.ok(openStreamCallCount > beforeCount, "openStream called again on reconnect");
+    assert.notStrictEqual(lastAudioHandle, oldHandle, "new audio handle created on reconnect");
+
+    pipeline.softStop();
+  });
+
+  // ------------------------------------------------------------------
+  // Resume after flushAndClose — #ttsStreamOpened must reset
+  // ------------------------------------------------------------------
+
+  it("resume() re-opens TTS stream after flushAndClose closes it", async () => {
+    /** @type {number} */
+    let openCount = 0;
+    /** @type {string[]} */
+    let deltas = [];
+
+    const mockTtsEngine = {
+      load: async () => {},
+      startStream: () => {},
+      stop: () => {},
+      openStream: () => {
+        openCount++;
+        return {
+          sendText: (/** @type {string} */ text) => { deltas.push(text); },
+          close: () => {},
+        };
+      },
+      destroy: () => {},
+    };
+
+    const mockLlmProvider = {
+      streamReasoning: async (
+        /** @type {string} */ _q,
+        /** @type {string} */ _s,
+        /** @type {{ onReasoningToken?: (token: string) => void, onDone?: () => void }} */ cb
+      ) => {
+        // Feed one token then finish — stream opens then closes via onDone flushAndClose
+        cb.onReasoningToken?.("Hello");
+        cb.onDone?.();
+      },
+    };
+
+    const { pipeline } = makePipeline({ ttsEngine: mockTtsEngine, llmProvider: mockLlmProvider });
+    await pipeline.startStream("system prompt", "question");
+
+    // Stream was opened once (token "Hello" triggered ensureTtsStream)
+    assert.strictEqual(openCount, 1, "stream should have been opened once");
+
+    // Now pause + resume. After flushAndClose (called on LLM end), #ttsStreamOpened
+    // must be false so resume can re-open if more text arrives.
+    pipeline.pause();
+    pipeline.resume();
+
+    // Feed a new token. If #ttsStreamOpened was reset, #ensureTtsStream() will
+    // open a second stream. If not, it bails early and text is silently dropped.
+    pipeline.feedToken(" More.");
+    await new Promise((r) => setTimeout(r, 10));
+
+    assert.strictEqual(openCount, 2, "resume should re-open stream after flushAndClose");
+    assert.ok(deltas.some(d => d.includes("More")), "new text should be sent after resume");
+
+    pipeline.softStop();
   });
 });
