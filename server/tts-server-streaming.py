@@ -227,9 +227,16 @@ class TTSGen:
                 self.done = True
                 return []
 
-        # If no entries and not closed, inject silence padding to prevent end
+        # If no entries and not closed, inject silence placeholder.
+        # This keeps the model alive (generating frames) while waiting
+        # for text to arrive. However, the audio from these padding steps
+        # is often non-silent garble with quantized models. We skip
+        # sending it to the client — only real text entries should produce
+        # audible output.
+        is_padding_step = False
         if not self.state.entries and not self.closed:
             self.state.entries.append(Entry(tokens=[], text="", padding=10))
+            is_padding_step = True
 
         # Forward pass
         missing = self.tts_model.lm.n_q - self.tts_model.lm.dep_q
@@ -248,9 +255,14 @@ class TTSGen:
         # Check for completed audio frame (after acoustic delay)
         frame = self.lm_gen.last_audio_tokens()
         if frame is not None and (frame != self.tts_model.machine.token_ids.zero).all():
+            # Always decode through Mimi to keep its internal state in sync
+            # (Mimi uses stateful convolutional layers — skipping frames
+            # desynchronizes the decoder, causing crackles).
+            # But discard padding PCM — it's garble, not real speech.
             frame_3d = mx.array(frame)[:, :, None]
             pcm = np.array(self.tts_model.mimi.decode_step(frame_3d)).astype(np.float32)
-            pcm_out.append(pcm.flatten().tolist())
+            if not is_padding_step:
+                pcm_out.append(pcm.flatten().tolist())
 
         return pcm_out
 
