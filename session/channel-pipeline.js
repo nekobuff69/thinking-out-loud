@@ -448,6 +448,10 @@ export class ChannelPipeline {
     this.#ttsStream?.close();
     this.#audioStream?.stop();
 
+    if (this.#firstChunkTimer) {
+      clearTimeout(this.#firstChunkTimer);
+      this.#firstChunkTimer = null;
+    }
     this.#cleanupReconnectListener();
     this.#ttsActive = false;
     this.#ttsStream = null;

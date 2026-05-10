@@ -140,6 +140,13 @@ export class KyutaiBackend extends TTSEngine {
 
         // Re-subscribe active stream state after reconnect
         if (this.#activeStreamState) {
+          // Emit reconnect FIRST so pipeline can re-init audio stream
+          // before any PCM arrives from the resubscription.
+          this.#eventBus?.emit("tts-reconnect", { modelName: this.#modelName });
+
+          this.#firstChunkEmitted = false;
+          this.#streamStartTime = Date.now();
+
           if (this.#streamMode === 'stream') {
             this.#streamHandleClosed = false;
             ws.send(JSON.stringify({ type: "open_stream", voice: this.#activeStreamState.voice }));
@@ -154,11 +161,6 @@ export class KyutaiBackend extends TTSEngine {
             this.#currentOnError?.("TTS reconnect: no text to synthesize");
             this.#clearCurrentStream();
           }
-          this.#firstChunkEmitted = false;
-          this.#streamStartTime = Date.now();
-
-          // Emit reconnect event after resubscribing
-          this.#eventBus?.emit("tts-reconnect", { modelName: this.#modelName });
         }
 
         this.#onReconnect?.();
@@ -294,6 +296,14 @@ export class KyutaiBackend extends TTSEngine {
     this.#streamStartTime = Date.now();
     this.#streamMode = 'synthesize';
 
+    // Reject empty text — consistent with reconnect guard (line 145)
+    if (!text) {
+      callbacks?.onError?.("TTS startStream: empty text");
+      this.#clearCurrentStream();
+      this.#activeStreamState = null;
+      return;
+    }
+
     this.#currentOnChunk = onAudioChunk;
     this.#currentOnDone = callbacks?.onDone || null;
     this.#currentOnError = callbacks?.onError || null;
@@ -351,7 +361,14 @@ export class KyutaiBackend extends TTSEngine {
     return {
       sendText(text) {
         if (self.#streamMode !== 'stream' || self.#streamHandleClosed) {
-          console.warn(`[KyutaiBackend] sendText called on closed stream (model: ${self.#modelName})`);
+          self.#eventBus?.emit("tts-text-dropped", {
+            modelName: self.#modelName,
+            reason: "sendText after stream closed",
+            chars: text?.length ?? 0,
+          });
+          if (!self.#eventBus) {
+            console.warn(`[KyutaiBackend] sendText called on closed stream (model: ${self.#modelName})`);
+          }
           return;
         }
         if (self.#ws && self.#ws.readyState === WebSocket.OPEN) {
@@ -360,7 +377,14 @@ export class KyutaiBackend extends TTSEngine {
       },
       close() {
         if (self.#streamMode !== 'stream' || self.#streamHandleClosed) {
-          console.warn(`[KyutaiBackend] close() called on already-closed stream (model: ${self.#modelName})`);
+          self.#eventBus?.emit("tts-text-dropped", {
+            modelName: self.#modelName,
+            reason: "close on already-closed stream",
+            chars: 0,
+          });
+          if (!self.#eventBus) {
+            console.warn(`[KyutaiBackend] close() called on already-closed stream (model: ${self.#modelName})`);
+          }
           return;
         }
         self.#streamHandleClosed = true;
