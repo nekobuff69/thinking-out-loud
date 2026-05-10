@@ -116,6 +116,9 @@ export class AudioGraph {
       /** @type {(() => void) | null} */
       let cleanupFn = null;
 
+      // Gapless scheduling for replay path
+      let nextStartTime = 0;
+
       /**
        * @param {Float32Array} pcm
        * @param {number} sampleRate
@@ -129,7 +132,15 @@ export class AudioGraph {
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(gain);
-        source.start();
+
+        // Schedule gaplessly
+        const now = ctx.currentTime;
+        if (nextStartTime < now) {
+          nextStartTime = now;
+        }
+        source.start(nextStartTime);
+        nextStartTime += buffer.duration;
+
         sources.add(source);
 
         source.onended = () => {
@@ -179,8 +190,14 @@ export class AudioGraph {
       let ended = false;
       let stopped = false;
 
+      // Gapless scheduling: track the next play time so buffers
+      // play back-to-back without overlap or gaps.
+      let nextStartTime = 0;
+
       /**
        * Feed a PCM frame for playback.
+       * Schedules each buffer to start immediately after the previous one,
+       * ensuring gapless, non-overlapping audio.
        * @param {Float32Array} pcm - Float32 PCM samples
        * @param {number} sampleRate - Sample rate of the PCM data
        */
@@ -193,7 +210,15 @@ export class AudioGraph {
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(gain);
-        source.start();
+
+        // Schedule gaplessly: start at nextStartTime, never overlap
+        const now = ctx.currentTime;
+        if (nextStartTime < now) {
+          nextStartTime = now;
+        }
+        source.start(nextStartTime);
+        nextStartTime += buffer.duration;
+
         sources.add(source);
 
         source.onended = () => {
