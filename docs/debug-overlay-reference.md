@@ -11,8 +11,11 @@ Interactive diagnostics panel for the Thinking Out Loud app. Press `` ` `` or `C
 │  Session: Thinking · Qwen 45 tokens           │  ← Global bar (green)
 │──────────────────────────────────────────────────│
 │  Qwen                                        │  ← Model card
+│  ● connected                                 │  ← Connection state
 │  🔤 Thinking                                │  ← Pipeline progress
-│  ⚡ TTS: 0.42s · Audio: 15 chunk(s) 12 kB  │  ← TTS latency + audio stats
+│  ⚡ 180ms · sent: I think...               │  ← TTS latency + last text sent
+│  3 queued                                   │  ← Entries waiting
+│  ✓ done                                     │  ← Finished
 │  [12:34:56] Error: connection refused       │  ← Errors
 │──────────────────────────────────────────────────│
 │  Gemma                                       │  ← Second model card
@@ -43,6 +46,15 @@ Session: Thinking · Qwen 45 tokens, Gemma 32 tokens, OSS 18 tokens
 
 Each model gets its own card showing pipeline internals.
 
+### Connection line
+
+Maps to `tts-connect` / `tts-disconnect` events from `KyutaiBackend`.
+
+| Display | Meaning |
+|---|---|
+| `● connected` | WebSocket to TTS server is open |
+| `✗ disconnected` | WebSocket closed or failed |
+
 ### Progress line
 
 Maps to `pipeline-progress` events from `ChannelPipeline`.
@@ -56,25 +68,43 @@ Maps to `pipeline-progress` events from `ChannelPipeline`.
 
 ### TTS Latency line
 
-Maps to `tts-first-chunk` event from `KyutaiBackend`.
+Maps to `tts-first-audio` event from `KyutaiBackend`.
 
 | Display | Meaning |
 |---|---|
-| `⚡ TTS: 0.42s` | 420ms from first token sent to server until first PCM chunk received |
-| `—` | No first chunk received yet |
+| `⚡ 180ms` | 180ms from stream open to first sound heard |
+| `—` | No first audio received yet |
 
-### Audio line
+### Speaking line
 
-Maps to `tts-chunk` events from `KyutaiBackend`. Cumulative chunk count and bytes.
+Maps to `tts-text-sent` event from `KyutaiBackend`.
 
 | Display | Meaning |
 |---|---|
-| `Audio: 15 chunk(s) 12 kB` | 15 PCM chunks received, ~12KB total audio data |
-| `—` | No audio chunks received yet |
+| `sent: I think...` | Last text chunk sent to server for speaking |
+| `—` | No text sent yet |
+
+### Queue line
+
+Maps to `tts-queue` event from `KyutaiBackend`.
+
+| Display | Meaning |
+|---|---|
+| `3 queued` | 3 word entries waiting to be spoken |
+| `0 queued` | Server has no backlog — text is keeping up |
+
+### Done line
+
+Maps to `tts-done` event from `KyutaiBackend`. Shows when the speaker has finished.
+
+| Display | Meaning |
+|---|---|
+| `✓ done` | All text spoken, stream complete |
+| `—` | Not finished yet |
 
 ### Errors line
 
-Maps to `pipeline-error` events from `ChannelPipeline`. Shows timestamped error messages (last 5).
+Maps to `tts-error` events from `KyutaiBackend` and `pipeline-error` events from `ChannelPipeline`. Shows timestamped error messages (last 5).
 
 ```
 [12:34:56] Error: connection refused
@@ -88,23 +118,24 @@ Errors are red text, oldest entries are dropped when more than 5 accumulate.
 ## State Flow (Full Lifecycle)
 
 ```
-Phase        Progress         TTS Latency     Audio
-───────────────────────────────────────────────────────────
-Setup        🚀 Start         —               —
-LLM starts   🔤 Thinking      —               —
-Text flowing 🔤 Thinking      —               —
-First audio  🔤 Thinking      ⚡ TTS: 0.42s   Audio: 1 chunk(s) 2 kB
-Streaming    🔤 Thinking      ⚡ TTS: 0.42s   Audio: 15 chunk(s) 12 kB
-LLM done     ✅ Done thinking  ⚡ TTS: 0.42s   Audio: 45 chunk(s) 36 kB
-All done     🔇 Finished      ⚡ TTS: 0.42s   Audio: 45 chunk(s) 36 kB
+Phase        Connection    Progress        Latency    Queue    Done
+─────────────────────────────────────────────────────────────────────
+Setup        ● connected   🚀 Start         —          —        —
+LLM starts   ● connected   🔤 Thinking      —          —        —
+Text flowing ● connected   🔤 Thinking      —          3 queued —
+First audio  ● connected   🔤 Thinking      ⚡ 180ms   3 queued —
+Streaming    ● connected   🔤 Thinking      ⚡ 180ms   5 queued —
+LLM done     ● connected   ✅ Done thinking  ⚡ 180ms   1 queued —
+All done     ● connected   🔇 Finished      ⚡ 180ms   0 queued ✓ done
 ```
 
 ### Interpretation Tips
 
-- **Healthy stream:** `TTS Latency` is sub-second, `Audio` chunk count is climbing
-- **Slow TTS:** `TTS Latency` > 2s — server may be CPU-bound, try `--quantize 8`
-- **No audio:** `TTS Latency` stays `—` — TTS server may be unreachable
-- **Capped:** Text stops streaming but synthesis continues for remaining audio
+- **Healthy stream:** `● connected`, `⚡` under 500ms, `queued` count stable, `sent` text climbing
+- **Slow TTS:** `queued` growing — server may be CPU-bound, try `--quantize 8`
+- **No audio:** `⚡` stays `—`, `sent` shows nothing — TTS server may be unreachable
+- **Stuck:** `queued` at 0 but not `✓ done` — stream may have stalled without closing
+- **Capped:** Text stops sending but synthesis continues for already-queued entries
 
 ---
 
@@ -130,23 +161,62 @@ Emitted by `ChannelPipeline.feedToken()` for every LLM token.
 { modelName: "Qwen", token: "the" }
 ```
 
-### `tts-first-chunk`
+### `tts-connect`
+Emitted by `KyutaiBackend` when WebSocket connects.
+
+```js
+{ modelName: "Qwen" }
+```
+
+### `tts-disconnect`
+Emitted by `KyutaiBackend` when WebSocket disconnects.
+
+```js
+{ modelName: "Qwen" }
+```
+
+### `tts-first-audio`
 Emitted by `KyutaiBackend` when the first PCM frame arrives from the server.
 
 ```js
-{ modelName: "Qwen", latencyMs: 420 }
+{ modelName: "Qwen", latencyMs: 180 }
 ```
 
-- `latencyMs` — time from `startStream()` call to first PCM chunk received
+- `latencyMs` — time from `openStream()` to first PCM chunk received
 
-### `tts-chunk`
-Emitted by `KyutaiBackend` for each PCM frame received.
+### `tts-text-sent`
+Emitted by `KyutaiBackend` when a text chunk is sent to the server.
 
 ```js
-{ modelName: "Qwen", bytesReceived: 2048 }
+{ modelName: "Qwen", chars: 15, words: 3, preview: "I think" }
 ```
 
-- `bytesReceived` — raw byte count of the Float32Array PCM data
+- `chars` — character count of the text chunk
+- `words` — approximate word count sent
+- `preview` — first 30 chars of the text chunk
+
+### `tts-queue`
+Emitted by `KyutaiBackend` when the server reports how many entries are queued.
+
+```js
+{ modelName: "Qwen", count: 3 }
+```
+
+- `count` — number of word entries waiting to be spoken
+
+### `tts-done`
+Emitted by `KyutaiBackend` when the server finishes generating all audio.
+
+```js
+{ modelName: "Qwen", totalSteps: 120, durationSec: 2.1 }
+```
+
+### `tts-error`
+Emitted by `KyutaiBackend` when the server reports an error.
+
+```js
+{ modelName: "Qwen", message: "invalid voice" }
+```
 
 ### `pipeline-progress`
 Emitted by `ChannelPipeline` on lifecycle stage changes.
