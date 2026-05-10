@@ -175,6 +175,15 @@ Emitted by `KyutaiBackend` when WebSocket disconnects.
 { modelName: "Qwen" }
 ```
 
+### `tts-reconnect`
+Emitted by `KyutaiBackend` after WebSocket reconnects and resubscribes the
+active stream session. Pipeline re-creates the audio stream handle in
+response.
+
+```js
+{ modelName: "Qwen" }
+```
+
 ### `tts-first-audio`
 Emitted by `KyutaiBackend` when the first PCM frame arrives from the server.
 
@@ -185,15 +194,28 @@ Emitted by `KyutaiBackend` when the first PCM frame arrives from the server.
 - `latencyMs` — time from `openStream()` to first PCM chunk received
 
 ### `tts-text-sent`
-Emitted by `KyutaiBackend` when a text chunk is sent to the server.
+Emitted by `ChannelPipeline` when a text chunk is flushed to the server.
 
 ```js
-{ modelName: "Qwen", chars: 15, words: 3, preview: "I think" }
+{ modelName: "Qwen", chars: 15, words: 3 }
 ```
 
 - `chars` — character count of the text chunk
 - `words` — approximate word count sent
-- `preview` — first 30 chars of the text chunk
+
+### `tts-text-dropped`
+Emitted by `KyutaiBackend` when `sendText()` or `close()` is called on an
+already-closed stream. Text is silently lost; this event makes the loss
+observable.
+
+```js
+{ modelName: "Qwen", reason: "sendText after stream closed", chars: 12 }
+```
+
+- `reason` — why the text was dropped
+- `chars` — character count of dropped text (0 for close())
+
+Falls back to `console.warn` when no event bus is configured.
 
 ### `tts-queue`
 Emitted by `KyutaiBackend` when the server reports how many entries are queued.
@@ -208,11 +230,12 @@ Emitted by `KyutaiBackend` when the server reports how many entries are queued.
 Emitted by `KyutaiBackend` when the server finishes generating all audio.
 
 ```js
-{ modelName: "Qwen", totalSteps: 120, durationSec: 2.1 }
+{ modelName: "Qwen" }
 ```
 
 ### `tts-error`
-Emitted by `KyutaiBackend` when the server reports an error.
+Emitted by `KyutaiBackend` when the server reports an error, or on
+reconnect when a synthesize stream has no text to resubmit.
 
 ```js
 { modelName: "Qwen", message: "invalid voice" }

@@ -2,7 +2,21 @@
 
 ## Status
 
-Proposed — design finalized, implementation pending.
+Accepted — implemented, May 2026.
+
+Implementation completed across 7 slices (#41–#47), plus 4 defect-fix
+slices (#49–#52):
+1. `server/tts-server-streaming.py` — TTSGen-based streaming server
+   with cooperative round-robin stepping (#41)
+2. Client streaming API: `KyutaiBackend.openStream()`, `AudioGraph.openStream()`,
+   `ChannelPipeline` unsent-buffer accumulator (#42)
+3. Orchestrator wiring: 3 KyutaiBackend instances, per-model backends,
+   monologue mode (#43)
+4. Polish: first-chunk 50ms timeout, Stop button (#44)
+5. Debug events: server logs, client overlay (#46)
+6. Replay verification: old path preserved unchanged (#47)
+7. Defect fixes: softStop backend isolation, resume after flushAndClose,
+   reconnect audio recovery, dropped-text observability (#49–#52)
 
 ## Context
 

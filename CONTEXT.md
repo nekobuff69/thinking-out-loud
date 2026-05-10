@@ -131,7 +131,7 @@ new ChannelPipeline({ model, ttsConfig, column, ttsBackend, llmProvider, audioGr
   .startStream(systemPrompt, question, signal?)  // → Promise (LLM → incremental TTS)
   .drainText(text)                    // Replay stored reasoning (uses legacy synthesiz protocol)
   .feedToken(token)                   // Manual token injection → accumulator → sendText()
-  .softStop()                         // Close stream + kill WebSocket immediately (fresh slate)
+  .softStop()                         // Close stream handles + stop audio. Backend stays alive.
   .pause() / .resume()                // Stop/start sendText() calls (monologue sequencing)
   .isActive / .isCapped / .reasoningText  // Getters
 ```
@@ -191,7 +191,8 @@ destroy()                           // Close WebSocket, prevent reconnect
 - `sendText()` sends `{"type":"text","data":"..."}` — appends entries on server.
 - `close()` sends `{"type":"close_stream"}` — server drains remaining entries.
 - Debug events to EventBus: `tts-connect`, `tts-disconnect`, `tts-first-audio` (ms),
-  `tts-text-sent`, `tts-queue` (entries queued), `tts-done`, `tts-error`.
+  `tts-text-sent`, `tts-queue` (entries queued), `tts-done`, `tts-error`, `tts-reconnect`,
+  `tts-text-dropped`.
 
 **Legacy single-shot API (preserved for replay only):**
 ```js
@@ -225,6 +226,11 @@ const bus = new SimpleEventBus();
 bus.on("token", (data) => { ... });             // { modelName, token }
 bus.on("tts-chunk", (data) => { ... });         // { modelName, bytesReceived }
 bus.on("tts-first-chunk", (data) => { ... });   // { modelName, latencyMs }
+bus.on("tts-text-sent", (data) => { ... });     // { modelName, chars, words }
+bus.on("tts-done", (data) => { ... });          // { modelName }
+bus.on("tts-error", (data) => { ... });         // { modelName, message }
+bus.on("tts-reconnect", (data) => { ... });     // { modelName } — WebSocket reconnected, audio re-init
+bus.on("tts-text-dropped", (data) => { ... });  // { modelName, reason, chars } — text lost to closed stream
 bus.on("pipeline-progress", (data) => { ... }); // { modelName, stage }
 bus.on("pipeline-error", (data) => { ... });    // { modelName, message, timestamp }
 bus.emit("token", { modelName: "Qwen", token: "h" });
@@ -312,6 +318,7 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `tts/text-chunker.js` | Word-boundary accumulator (drain-on-send, first-chunk timeout) | Shallow |
 | `server/tts-server-streaming.py` | Python+MLX streaming server (TTSGen, cooperative round-robin, new protocol) | Deep |
 | `server/tts-server.py` | Legacy single-shot Python+MLX server (preserved for replay fallback) | Deep |
+| `server/test_server_streaming.py` | Python integration tests for streaming server (7 tests) | Shallow (test) |
 | `server/requirements.txt` | Python server dependencies (moshi-mlx, websockets) | Shallow (config) |
 | `audio/audio-graph.js` | Web Audio routing + ducking | Deep |
 | `audio/waveform.js` | Canvas visualization from AnalyserNode | Deep |
@@ -327,7 +334,7 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `vite-env.d.ts` | Vite/CSS module type declarations | Shallow (types) |
 | `.gitignore` | Ignored files (node_modules, .env, scratch) | Shallow (config) |
 | `.env` | Legacy CLI script vars (not read by browser app) | Shallow (config) |
-| `test/` | Node test runner suites (64 tests, 15 suites) | Shallow (test) |
+| `test/` | Node test runner suites (98 tests, 17 suites) | Shallow (test) |
 | `ui/debug-overlay.js` | Togglable pipeline diagnostics panel | Deep |
 | `ui/debug-overlay.css` | Debug overlay styling | Shallow (style) |
 
@@ -350,10 +357,10 @@ npm test
 | `health-check.test.js` | 4 | URL construction with/without trailing slashes, fetch errors |
 | `llm-stream.test.js` | 4 | Endpoint construction with/without trailing slashes |
 | `openai-compatible-provider.test.js` | 9 | Separate/tagged/none reasoning formats, URL construction, retry, abort |
-| `orchestrator.test.js` | 1 | stop() → Idle transition after manual stop |
-| `channel-pipeline.test.js` | 5 | Empty LLM stream detection, TTS streaming path, TextChunker integration, mono/pause/resume |
-| `kyutai-backend.test.js` | 12 | WebSocket connection, streaming, PCM chunk ordering, reconnect, error handling |
-| `audio-graph-stream.test.js` | 5 | playStream PCM playback, scheduling, ducking, stop |
+| `orchestrator.test.js` | 3 | stop() → Idle transition, no-save after stop, monologue sequencing |
+| `channel-pipeline.test.js` | 16 | Empty LLM stream detection, TTS streaming path, word-boundary deltas, no-restart guarantee, token cap, content boundary, first-chunk timeout, softStop isolation, reconnect audio recovery, resume after close, replay guard |
+| `kyutai-backend.test.js` | 21 | WebSocket connection, streaming (old + new API), PCM chunk ordering, reconnect + re-subscribe, error handling, reconnect events, drop warnings |
+| `audio-graph-stream.test.js` | 7 | playStream PCM playback, scheduling, ducking, stop; openStream feed/end/stop/ducking |
 | `text-chunker.test.js` | 16 | Punctuation/timeout/max-words flush, no-premature-flush, disabled punctuation
 
 ### Testable modules (for new tests)
