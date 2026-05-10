@@ -20,7 +20,7 @@ import { TextChunker } from "../tts/text-chunker.js";
  * @property {TTSConfig} ttsConfig
  * @property {AudioGraph} audioGraph
  * @property {Map<string, ColumnAPI>} columns
- * @property {import("../tts/tts-engine.js").TTSEngine} ttsEngine
+ * @property {Map<string, import("../tts/tts-engine.js").TTSEngine>} ttsEngines
  * @property {SessionStore} storage
  */
 
@@ -40,8 +40,8 @@ export class Orchestrator {
   #audioGraph;
   /** @type {Map<string, ColumnAPI>} */
   #columns;
-  /** @type {import("../tts/tts-engine.js").TTSEngine} */
-  #ttsEngine;
+  /** @type {Map<string, import("../tts/tts-engine.js").TTSEngine>} */
+  #ttsEngines;
   /** @type {((state: string) => void) | null} */
   #onStateChange = null;
   /** @type {string} */
@@ -70,13 +70,13 @@ export class Orchestrator {
   /**
    * @param {OrchestratorDeps} deps
    */
-  constructor({ models, systemPrompt, ttsConfig, audioGraph, columns, ttsEngine, storage }) {
+  constructor({ models, systemPrompt, ttsConfig, audioGraph, columns, ttsEngines, storage }) {
     this.#models = models;
     this.#systemPrompt = systemPrompt;
     this.#ttsConfig = ttsConfig;
     this.#audioGraph = audioGraph;
     this.#columns = columns;
-    this.#ttsEngine = ttsEngine;
+    this.#ttsEngines = ttsEngines;
     this.#storage = storage;
   }
 
@@ -124,7 +124,9 @@ export class Orchestrator {
 
     this.#setState("Loading: connecting to TTS server…");
     try {
-      await this.#ttsEngine.load();
+      await Promise.all(
+        [...this.#ttsEngines.values()].map((e) => e.load())
+      );
     } catch (err) {
       this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.wsUrl || "ws://localhost:8765"}`);
       return;
@@ -209,7 +211,9 @@ export class Orchestrator {
 
     this.#setState("Loading: connecting to TTS server…");
     try {
-      await this.#ttsEngine.load();
+      await Promise.all(
+        [...this.#ttsEngines.values()].map((e) => e.load())
+      );
     } catch (err) {
       this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.wsUrl || "ws://localhost:8765"}`);
       return;
@@ -274,11 +278,14 @@ export class Orchestrator {
         this.#providerCache.set(cacheKey, llmProvider);
       }
 
+      const ttsEngine = this.#ttsEngines.get(model.name);
+      if (!ttsEngine) continue;
+
       const pipeline = new ChannelPipeline({
         model: /** @type {ModelConfig} */ (model),
         ttsConfig: this.#ttsConfig,
         column,
-        ttsEngine: this.#ttsEngine,
+        ttsEngine,
         llmProvider,
         audioGraph: this.#audioGraph,
         eventBus: this.#eventBus,

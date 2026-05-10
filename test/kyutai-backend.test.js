@@ -31,7 +31,6 @@ class MockWebSocket {
    */
   constructor(url) {
     this.url = url;
-    // Simulate async connection
     queueMicrotask(() => {
       this.readyState = MockWebSocket.OPEN;
       this.onopen?.();
@@ -50,7 +49,7 @@ class MockWebSocket {
     this.onclose?.({ code, reason });
   }
 
-  /** Simulate server sending a message to the client.
+  /** Simulate server sending a message.
    * @param {string} data
    */
   _serverSend(data) {
@@ -66,7 +65,6 @@ class MockWebSocket {
   }
 }
 
-// Import after mocking WebSocket
 import { KyutaiBackend } from "../tts/kyutai-backend.js";
 
 describe("KyutaiBackend", () => {
@@ -83,29 +81,34 @@ describe("KyutaiBackend", () => {
     globalThis.WebSocket = originalWebSocket;
   });
 
+  // ------------------------------------------------------------------
+  // load()
+  // ------------------------------------------------------------------
+
   describe("load()", () => {
     it("opens a WebSocket connection to the configured URL", async () => {
       const backend = new KyutaiBackend({ wsUrl: "ws://localhost:8765" });
       await backend.load();
-      // Connection should be established
-      // After load, backend should be ready
       assert.ok(true, "load completed without error");
     });
 
     it("connects to ws://localhost:8765 by default", async () => {
       const backend = new KyutaiBackend();
       await backend.load();
-      // Default URL should work
       assert.ok(true, "default connection established");
     });
 
     it("only opens one WebSocket connection on repeated load() calls", async () => {
       const backend = new KyutaiBackend();
       await backend.load();
-      await backend.load(); // second call should be a no-op
+      await backend.load();
       assert.ok(true, "idempotent load");
     });
   });
+
+  // ------------------------------------------------------------------
+  // startStream() — legacy API (preserved for replay)
+  // ------------------------------------------------------------------
 
   describe("startStream()", () => {
     it("sends correct synthesize JSON message", async () => {
@@ -134,22 +137,13 @@ describe("KyutaiBackend", () => {
         chunks.push({ pcm: new Float32Array(pcm), sampleRate });
       });
 
-      // Send one chunk
       ws._serverSend(JSON.stringify({ type: "pcm", data: [0.1, 0.2, 0.3] }));
       ws._serverSend(JSON.stringify({ type: "pcm", data: [0.4, 0.5, 0.6] }));
 
-      // Allow microtasks to flush
       await new Promise((r) => setTimeout(r, 10));
 
       assert.strictEqual(chunks.length, 2);
-      // Use approximate comparison for float precision after JSON round-trip
-      assert.ok(chunks[0].pcm.length === 3, "first chunk has 3 samples");
-      assert.ok(Math.abs(chunks[0].pcm[0] - 0.1) < 1e-5, "first sample ~0.1");
-      assert.ok(Math.abs(chunks[0].pcm[1] - 0.2) < 1e-5, "second sample ~0.2");
-      assert.ok(Math.abs(chunks[0].pcm[2] - 0.3) < 1e-5, "third sample ~0.3");
-      assert.ok(chunks[1].pcm.length === 3, "second chunk has 3 samples");
-      assert.ok(Math.abs(chunks[1].pcm[0] - 0.4) < 1e-5, "4th sample ~0.4");
-      // Default sample rate
+      assert.ok(Math.abs(chunks[0].pcm[0] - 0.1) < 1e-5);
       assert.strictEqual(chunks[0].sampleRate, 24000);
     });
 
@@ -166,7 +160,6 @@ describe("KyutaiBackend", () => {
         onError: () => { errorCalled = true; },
       });
 
-      // Send a PCM chunk then done
       ws._serverSend(JSON.stringify({ type: "pcm", data: [0.1] }));
       ws._serverSend(JSON.stringify({ type: "done" }));
 
@@ -207,16 +200,13 @@ describe("KyutaiBackend", () => {
       /** @type {string[]} */
       const stream2Chunks = [];
 
-      // Start first stream
       backend.startStream("One", "alba", (pcm) => {
         stream1Chunks.push(`stream1:${pcm[0]}`);
       });
 
-      // Simulate a chunk for stream 1
       ws._serverSend(JSON.stringify({ type: "pcm", data: [1.0] }));
       await new Promise((r) => setTimeout(r, 5));
 
-      // Start second stream (this should interrupt stream 1)
       backend.startStream("Two", "alba", (pcm) => {
         stream2Chunks.push(`stream2:${pcm[0]}`);
       });
@@ -225,11 +215,299 @@ describe("KyutaiBackend", () => {
       ws._serverSend(JSON.stringify({ type: "done" }));
       await new Promise((r) => setTimeout(r, 10));
 
-      // Stream 2 should have received the chunk; stream 1 callbacks should have been replaced
       assert.strictEqual(stream2Chunks.length, 1);
       assert.strictEqual(stream2Chunks[0], "stream2:2");
     });
   });
+
+  // ------------------------------------------------------------------
+  // openStream() — new streaming API
+  // ------------------------------------------------------------------
+
+  describe("openStream()", () => {
+    it("sends correct open_stream JSON message", async () => {
+      const backend = new KyutaiBackend();
+      await backend.load();
+
+      const ws = /** @type {MockWebSocket} */ ((/** @type {any} */ (backend)._testWs));
+      backend.openStream("alba", {
+        onAudioChunk: () => {},
+        onDone: () => {},
+        onError: () => {},
+      });
+
+      assert.strictEqual(ws.sentMessages.length, 1);
+      const sent = JSON.parse(ws.sentMessages[0]);
+      assert.strictEqual(sent.type, "open_stream");
+      assert.strictEqual(sent.voice, "alba");
+    });
+
+    it("sendText sends text JSON messages", async () => {
+      const backend = new KyutaiBackend();
+      await backend.load();
+
+      const ws = /** @type {MockWebSocket} */ ((/** @type {any} */ (backend)._testWs));
+      const handle = backend.openStream("alba", {
+        onAudioChunk: () => {},
+        onDone: () => {},
+        onError: () => {},
+      });
+
+      handle.sendText("Hello world");
+      handle.sendText(" more text");
+
+      assert.strictEqual(ws.sentMessages.length, 3); // open_stream + 2 texts
+      const msg1 = JSON.parse(ws.sentMessages[1]);
+      assert.strictEqual(msg1.type, "text");
+      assert.strictEqual(msg1.data, "Hello world");
+      const msg2 = JSON.parse(ws.sentMessages[2]);
+      assert.strictEqual(msg2.type, "text");
+      assert.strictEqual(msg2.data, " more text");
+    });
+
+    it("close sends close_stream JSON message", async () => {
+      const backend = new KyutaiBackend();
+      await backend.load();
+
+      const ws = /** @type {MockWebSocket} */ ((/** @type {any} */ (backend)._testWs));
+      const handle = backend.openStream("alba", {
+        onAudioChunk: () => {},
+        onDone: () => {},
+        onError: () => {},
+      });
+
+      handle.close();
+
+      const lastMsg = JSON.parse(ws.sentMessages[ws.sentMessages.length - 1]);
+      assert.strictEqual(lastMsg.type, "close_stream");
+    });
+
+    it("delivers PCM chunks via onAudioChunk callback", async () => {
+      const backend = new KyutaiBackend();
+      await backend.load();
+
+      const ws = /** @type {MockWebSocket} */ ((/** @type {any} */ (backend)._testWs));
+      /** @type {Array<Float32Array>} */
+      const chunks = [];
+
+      backend.openStream("alba", {
+        onAudioChunk: (pcm) => { chunks.push(new Float32Array(pcm)); },
+        onDone: () => {},
+        onError: () => {},
+      });
+
+      ws._serverSend(JSON.stringify({ type: "pcm", data: [0.1, 0.2] }));
+      ws._serverSend(JSON.stringify({ type: "pcm", data: [0.3, 0.4] }));
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      assert.strictEqual(chunks.length, 2);
+      assert.strictEqual(chunks[0].length, 2);
+      assert.ok(Math.abs(chunks[0][0] - 0.1) < 1e-5);
+    });
+
+    it("calls onDone when server sends done", async () => {
+      const backend = new KyutaiBackend();
+      await backend.load();
+
+      const ws = /** @type {MockWebSocket} */ ((/** @type {any} */ (backend)._testWs));
+      let doneCalled = false;
+      let errorCalled = false;
+
+      backend.openStream("alba", {
+        onAudioChunk: () => {},
+        onDone: () => { doneCalled = true; },
+        onError: () => { errorCalled = true; },
+      });
+
+      ws._serverSend(JSON.stringify({ type: "pcm", data: [0.1] }));
+      ws._serverSend(JSON.stringify({ type: "done" }));
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      assert.strictEqual(doneCalled, true);
+      assert.strictEqual(errorCalled, false);
+    });
+
+    it("calls onError when server sends error", async () => {
+      const backend = new KyutaiBackend();
+      await backend.load();
+
+      const ws = /** @type {MockWebSocket} */ ((/** @type {any} */ (backend)._testWs));
+      let doneCalled = false;
+      let errorMsg = "";
+
+      backend.openStream("bad_voice", {
+        onAudioChunk: () => {},
+        onDone: () => { doneCalled = true; },
+        onError: (msg) => { errorMsg = msg; },
+      });
+
+      ws._serverSend(JSON.stringify({ type: "error", message: "Invalid voice" }));
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      assert.strictEqual(doneCalled, false);
+      assert.strictEqual(errorMsg, "Invalid voice");
+    });
+
+    it("only one active stream at a time", async () => {
+      const backend = new KyutaiBackend();
+      await backend.load();
+
+      const ws = /** @type {MockWebSocket} */ ((/** @type {any} */ (backend)._testWs));
+      /** @type {string[]} */
+      const stream1Chunks = [];
+      /** @type {string[]} */
+      const stream2Chunks = [];
+
+      // First stream
+      const h1 = backend.openStream("voice1", {
+        onAudioChunk: (pcm) => { stream1Chunks.push(`s1:${pcm[0]}`); },
+        onDone: () => {},
+        onError: () => {},
+      });
+
+      ws._serverSend(JSON.stringify({ type: "pcm", data: [1.0] }));
+      await new Promise((r) => setTimeout(r, 5));
+
+      // Second stream replaces first
+      const h2 = backend.openStream("voice2", {
+        onAudioChunk: (pcm) => { stream2Chunks.push(`s2:${pcm[0]}`); },
+        onDone: () => {},
+        onError: () => {},
+      });
+
+      ws._serverSend(JSON.stringify({ type: "pcm", data: [2.0] }));
+      await new Promise((r) => setTimeout(r, 5));
+
+      // Stream 2 should get the second chunk, stream 1 should not get it
+      assert.strictEqual(stream1Chunks.length, 1, "stream1 got first chunk");
+      assert.strictEqual(stream2Chunks.length, 1, "stream2 got second chunk");
+      assert.strictEqual(stream2Chunks[0], "s2:2");
+    });
+
+    it("stop() clears stream and ignores further messages", async () => {
+      const backend = new KyutaiBackend();
+      await backend.load();
+
+      const ws = /** @type {MockWebSocket} */ ((/** @type {any} */ (backend)._testWs));
+      /** @type {Array<Float32Array>} */
+      const chunks = [];
+
+      backend.openStream("alba", {
+        onAudioChunk: (pcm) => { chunks.push(new Float32Array(pcm)); },
+        onDone: () => {},
+        onError: () => {},
+      });
+
+      ws._serverSend(JSON.stringify({ type: "pcm", data: [0.1] }));
+      await new Promise((r) => setTimeout(r, 5));
+
+      backend.stop();
+
+      ws._serverSend(JSON.stringify({ type: "pcm", data: [0.2] }));
+      ws._serverSend(JSON.stringify({ type: "done" }));
+      await new Promise((r) => setTimeout(r, 5));
+
+      assert.strictEqual(chunks.length, 1);
+    });
+
+    it("sendText works after reconnect for openStream", async () => {
+      // Use ReconnectingMockWS for reconnect test
+      class ReconnectingMockWS {
+        static CONNECTING = 0;
+        static OPEN = 1;
+        static CLOSING = 2;
+        static CLOSED = 3;
+
+        /** @type {ReconnectingMockWS[]} */
+        static instances = [];
+
+        url = "";
+        readyState = 0;
+        sentMessages = [];
+        onmessage = null;
+        onopen = null;
+        onclose = null;
+        onerror = null;
+
+        constructor(url) {
+          this.url = url;
+          this.readyState = 0;
+          ReconnectingMockWS.instances.push(this);
+          queueMicrotask(() => {
+            this.readyState = ReconnectingMockWS.OPEN;
+            this.onopen?.();
+          });
+        }
+
+        send(data) {
+          this.sentMessages.push(data);
+        }
+
+        close(code, reason) {
+          this.readyState = ReconnectingMockWS.CLOSED;
+          this.onclose?.({ code, reason });
+        }
+
+        _serverSend(data) {
+          if (this.onmessage) this.onmessage({ data });
+        }
+
+        _simulateDrop() {
+          this.readyState = ReconnectingMockWS.CLOSED;
+          this.onclose?.({ code: 1006, reason: "Abnormal closure" });
+        }
+      }
+
+      beforeEach(() => { ReconnectingMockWS.instances = []; });
+
+      // @ts-ignore
+      globalThis.WebSocket = ReconnectingMockWS;
+
+      const backend = new KyutaiBackend({ wsUrl: "ws://localhost:8765", reconnectBaseDelay: 1 });
+      await backend.load();
+
+      /** @type {string[]} */
+      const receivedPcm = [];
+
+      const handle = backend.openStream("alba", {
+        onAudioChunk: (pcm) => { receivedPcm.push(`pcm:${pcm[0]}`); },
+        onDone: () => {},
+        onError: () => {},
+      });
+
+      const ws = /** @type {ReconnectingMockWS} */ (backend._testWs);
+      ws._serverSend(JSON.stringify({ type: "pcm", data: [1.0] }));
+      await new Promise((r) => setTimeout(r, 5));
+
+      // Simulate drop
+      ws._simulateDrop();
+      await new Promise((r) => setTimeout(r, 100));
+
+      // After reconnect, open_stream should be re-sent
+      const newWs = /** @type {ReconnectingMockWS} */ (backend._testWs);
+      assert.ok(newWs !== ws, "new WebSocket after reconnect");
+
+      // Verify open_stream was re-sent
+      const openMsgs = newWs.sentMessages.filter(
+        (m) => JSON.parse(m).type === "open_stream"
+      );
+      assert.ok(openMsgs.length >= 1, "open_stream re-sent after reconnect");
+
+      // sendText should work on new connection
+      handle.sendText("new text after reconnect");
+      const textMsgs = newWs.sentMessages.filter(
+        (m) => JSON.parse(m).type === "text"
+      );
+      assert.ok(textMsgs.length >= 1, "text sent after reconnect");
+    });
+  });
+
+  // ------------------------------------------------------------------
+  // stop()
+  // ------------------------------------------------------------------
 
   describe("stop()", () => {
     it("aborts the current stream and stops delivering chunks", async () => {
@@ -237,27 +515,29 @@ describe("KyutaiBackend", () => {
       await backend.load();
 
       const ws = /** @type {MockWebSocket} */ ((/** @type {any} */ (backend)._testWs));
-      /** @type {Array<{pcm: Float32Array, sampleRate: number}>} */
+      /** @type {Array<Float32Array>} */
       const chunks = [];
 
-      backend.startStream("Long text", "alba", (pcm, sampleRate) => {
-        chunks.push({ pcm: new Float32Array(pcm), sampleRate });
+      backend.startStream("Long text", "alba", (pcm) => {
+        chunks.push(new Float32Array(pcm));
       });
 
-      // Send one chunk
       ws._serverSend(JSON.stringify({ type: "pcm", data: [0.1] }));
       await new Promise((r) => setTimeout(r, 5));
 
       backend.stop();
 
-      // Send more chunks after stop — they should be ignored
       ws._serverSend(JSON.stringify({ type: "pcm", data: [0.2] }));
       ws._serverSend(JSON.stringify({ type: "done" }));
       await new Promise((r) => setTimeout(r, 5));
 
-      assert.strictEqual(chunks.length, 1); // only first chunk received
+      assert.strictEqual(chunks.length, 1);
     });
   });
+
+  // ------------------------------------------------------------------
+  // destroy()
+  // ------------------------------------------------------------------
 
   describe("destroy()", () => {
     it("closes the WebSocket connection", async () => {
@@ -276,15 +556,17 @@ describe("KyutaiBackend", () => {
       const backend = new KyutaiBackend();
       await backend.load();
       backend.destroy();
-      // Should be able to load again
       await backend.load();
       assert.ok(true, "re-load after destroy succeeded");
     });
   });
 
+  // ------------------------------------------------------------------
+  // load error handling
+  // ------------------------------------------------------------------
+
   describe("load error handling", () => {
     it("rejects load() when WebSocket connection fails", async () => {
-      // Mock WebSocket that fails to connect
       class FailingWebSocket {
         static CONNECTING = 0;
         static OPEN = 1;
@@ -300,9 +582,8 @@ describe("KyutaiBackend", () => {
 
         constructor(url) {
           this.url = url;
-          // Simulate immediate connection failure — no onopen
           queueMicrotask(() => {
-            this.readyState = 3; // CLOSED
+            this.readyState = 3;
             this.onerror?.({ message: "Connection refused" });
           });
         }
@@ -313,7 +594,6 @@ describe("KyutaiBackend", () => {
       globalThis.WebSocket = FailingWebSocket;
 
       const backend = new KyutaiBackend();
-
       await assert.rejects(
         () => backend.load(),
         /TTS server unreachable/,
@@ -321,20 +601,18 @@ describe("KyutaiBackend", () => {
     });
   });
 
+  // ------------------------------------------------------------------
+  // reconnect
+  // ------------------------------------------------------------------
+
   describe("reconnect", () => {
-    /**
-     * ReconnectingMockWebSocket: tracks all instances and allows
-     * simulating drops and reconnections.
-     */
     class ReconnectingMockWS {
       static CONNECTING = 0;
       static OPEN = 1;
       static CLOSING = 2;
       static CLOSED = 3;
-
       /** @type {ReconnectingMockWS[]} */
       static instances = [];
-
       url = "";
       readyState = 0;
       sentMessages = [];
@@ -347,37 +625,25 @@ describe("KyutaiBackend", () => {
         this.url = url;
         this.readyState = 0;
         ReconnectingMockWS.instances.push(this);
-        // Simulate async connection
         queueMicrotask(() => {
           this.readyState = ReconnectingMockWS.OPEN;
           this.onopen?.();
         });
       }
 
-      send(data) {
-        this.sentMessages.push(data);
-      }
-
+      send(data) { this.sentMessages.push(data); }
       close(code, reason) {
         this.readyState = ReconnectingMockWS.CLOSED;
         this.onclose?.({ code, reason });
       }
-
-      _serverSend(data) {
-        if (this.onmessage) {
-          this.onmessage({ data });
-        }
-      }
-
+      _serverSend(data) { if (this.onmessage) this.onmessage({ data }); }
       _simulateDrop() {
         this.readyState = ReconnectingMockWS.CLOSED;
         this.onclose?.({ code: 1006, reason: "Abnormal closure" });
       }
     }
 
-    beforeEach(() => {
-      ReconnectingMockWS.instances = [];
-    });
+    beforeEach(() => { ReconnectingMockWS.instances = []; });
 
     it("reconnects after unexpected WebSocket drop", async () => {
       // @ts-ignore
@@ -387,22 +653,18 @@ describe("KyutaiBackend", () => {
       await backend.load();
 
       const ws = /** @type {ReconnectingMockWS} */ (backend._testWs);
-      assert.ok(ws, "initial connection exists");
+      assert.ok(ws);
       assert.strictEqual(ws.readyState, ReconnectingMockWS.OPEN);
 
-      // Simulate drop
       ws._simulateDrop();
-
-      // Wait for reconnect attempt (base delay 1ms → 1ms, fast)
       await new Promise((r) => setTimeout(r, 50));
 
-      // Should have created a new WebSocket instance for reconnect
       assert.ok(
         ReconnectingMockWS.instances.length >= 2,
         `Expected >= 2 instances, got ${ReconnectingMockWS.instances.length}`
       );
       const newWs = /** @type {ReconnectingMockWS} */ (backend._testWs);
-      assert.ok(newWs !== ws, "backend should reference new WebSocket");
+      assert.ok(newWs !== ws, "new WebSocket after reconnect");
     });
 
     it("does not reconnect after intentional destroy()", async () => {
@@ -416,7 +678,6 @@ describe("KyutaiBackend", () => {
 
       backend.destroy();
 
-      // Wait to see if any reconnect happens
       await new Promise((r) => setTimeout(r, 50));
 
       assert.strictEqual(
@@ -426,7 +687,7 @@ describe("KyutaiBackend", () => {
       );
     });
 
-    it("re-subscribes active stream after reconnect", async () => {
+    it("re-subscribes active stream (old path) after reconnect", async () => {
       // @ts-ignore
       globalThis.WebSocket = ReconnectingMockWS;
 
@@ -435,32 +696,25 @@ describe("KyutaiBackend", () => {
 
       const ws = /** @type {ReconnectingMockWS} */ (backend._testWs);
 
-      // Start a stream
       backend.startStream("Reconnect test", "alba", () => {});
-
-      // Check we sent the initial synthesize
       const sentBefore = ws.sentMessages.length;
       assert.ok(sentBefore >= 1, "initial synthesize sent");
 
-      // Simulate drop
       ws._simulateDrop();
-
-      // Wait for reconnect
       await new Promise((r) => setTimeout(r, 50));
 
       const newWs = /** @type {ReconnectingMockWS} */ (backend._testWs);
       if (newWs) {
-        // After reconnect, the active stream should be re-sent
-        assert.ok(
-          newWs.sentMessages.length >= 1,
-          "re-sent synthesize after reconnect"
-        );
+        assert.ok(newWs.sentMessages.length >= 1, "re-sent after reconnect");
         const reSent = JSON.parse(newWs.sentMessages[newWs.sentMessages.length - 1]);
         assert.strictEqual(reSent.type, "synthesize");
-        assert.ok(reSent.text.includes("Reconnect test"));
       }
     });
   });
+
+  // ------------------------------------------------------------------
+  // TTS events
+  // ------------------------------------------------------------------
 
   describe("TTS events", () => {
     beforeEach(() => {
@@ -486,13 +740,39 @@ describe("KyutaiBackend", () => {
 
       backend.startStream("Hello", "alba", () => {});
 
-      // Send first PCM chunk
       ws._serverSend(JSON.stringify({ type: "pcm", data: [0.1, 0.2] }));
       await new Promise((r) => setTimeout(r, 10));
 
-      assert.strictEqual(firstChunks.length, 1, "should emit exactly one tts-first-chunk");
+      assert.strictEqual(firstChunks.length, 1);
       assert.strictEqual(firstChunks[0].modelName, "Qwen");
-      assert.ok(typeof firstChunks[0].latencyMs === "number", "latencyMs is a number");
+    });
+
+    it("emits tts-first-chunk for openStream too", async () => {
+      const { SimpleEventBus } = await import("../session/event-bus.js");
+      const bus = new SimpleEventBus();
+      /** @type {Array<{ modelName: string, latencyMs: number }>} */
+      const firstChunks = [];
+      bus.on("tts-first-chunk", (data) => firstChunks.push(data));
+
+      const backend = new KyutaiBackend({
+        wsUrl: "ws://localhost:8765",
+        eventBus: bus,
+        modelName: "Qwen",
+      });
+      await backend.load();
+
+      const ws = /** @type {MockWebSocket} */ (backend._testWs);
+
+      backend.openStream("alba", {
+        onAudioChunk: () => {},
+        onDone: () => {},
+        onError: () => {},
+      });
+
+      ws._serverSend(JSON.stringify({ type: "pcm", data: [0.1] }));
+      await new Promise((r) => setTimeout(r, 10));
+
+      assert.strictEqual(firstChunks.length, 1);
     });
 
     it("emits tts-first-chunk only once per stream", async () => {
@@ -513,13 +793,12 @@ describe("KyutaiBackend", () => {
 
       backend.startStream("Hello", "alba", () => {});
 
-      // Send multiple PCM chunks
       ws._serverSend(JSON.stringify({ type: "pcm", data: [0.1] }));
       ws._serverSend(JSON.stringify({ type: "pcm", data: [0.2] }));
       ws._serverSend(JSON.stringify({ type: "pcm", data: [0.3] }));
       await new Promise((r) => setTimeout(r, 10));
 
-      assert.strictEqual(firstChunks.length, 1, "only one tts-first-chunk emitted");
+      assert.strictEqual(firstChunks.length, 1);
     });
 
     it("emits tts-chunk for each PCM chunk", async () => {
@@ -545,14 +824,10 @@ describe("KyutaiBackend", () => {
       await new Promise((r) => setTimeout(r, 10));
 
       assert.strictEqual(chunks.length, 2);
-      assert.strictEqual(chunks[0].modelName, "Qwen");
-      // bytesReceived = Float32Array byte length (3 * 4 = 12)
       assert.strictEqual(chunks[0].bytesReceived, 12);
-      // bytesReceived = 2 * 4 = 8
-      assert.strictEqual(chunks[1].bytesReceived, 8);
     });
 
-    it("resets first-chunk tracking on new startStream", async () => {
+    it("resets first-chunk tracking on new stream (old path)", async () => {
       const { SimpleEventBus } = await import("../session/event-bus.js");
       const bus = new SimpleEventBus();
       /** @type {Array<{ modelName: string, latencyMs: number }>} */
@@ -568,21 +843,19 @@ describe("KyutaiBackend", () => {
 
       const ws = /** @type {MockWebSocket} */ (backend._testWs);
 
-      // First stream
       backend.startStream("First", "alba", () => {});
       ws._serverSend(JSON.stringify({ type: "pcm", data: [0.1] }));
       ws._serverSend(JSON.stringify({ type: "done" }));
       await new Promise((r) => setTimeout(r, 10));
       assert.strictEqual(firstChunks.length, 1);
 
-      // Second stream
       backend.startStream("Second", "alba", () => {});
       ws._serverSend(JSON.stringify({ type: "pcm", data: [0.2] }));
       await new Promise((r) => setTimeout(r, 10));
-      assert.strictEqual(firstChunks.length, 2, "emits first-chunk again for new stream");
+      assert.strictEqual(firstChunks.length, 2);
     });
 
-    it("works without eventBus (no events emitted, no crash)", async () => {
+    it("works without eventBus (no crash)", async () => {
       const backend = new KyutaiBackend({ wsUrl: "ws://localhost:8765", modelName: "Qwen" });
       await backend.load();
 

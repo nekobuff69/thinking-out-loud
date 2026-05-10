@@ -5,21 +5,33 @@ import { TTSEngine } from "./tts-engine.js";
  */
 
 /**
+ * @typedef {Object} StreamHandle
+ * @property {(text: string) => void} sendText - Send incremental text chunk
+ * @property {() => void} close - Signal end of text (sends close_stream)
+ */
+
+/**
  * Kyutai DSM TTS WebSocket client.
- * Implements the streaming TTSEngine interface connecting to a local Python+MLX server.
  *
- * Protocol (all JSON text frames over WebSocket):
- *   Client → Server: {"type": "synthesize", "text": "...", "voice": "..."}
- *   Server → Client: {"type": "pcm", "data": [float32_values]}
- *   Server → Client: {"type": "done"}
- *   Server → Client: {"type": "error", "message": "..."}
+ * Implements both the legacy single-shot protocol (for replay) and the new
+ * streaming protocol (for live TTS synthesis).
  *
- * The WebSocket connection is persistent; multiple startStream() calls reuse it.
- * PCM frames are decoded from JSON arrays into Float32Array and dispatched via
- * the onAudioChunk callback.
+ * New streaming protocol:
+ *   Client -> Server: {"type":"open_stream","voice":"..."}
+ *   Client -> Server: {"type":"text","data":"..."}
+ *   Client -> Server: {"type":"close_stream"}
+ *   Server -> Client: {"type":"pcm","data":[...]}
+ *   Server -> Client: {"type":"done"}
+ *   Server -> Client: {"type":"error","message":"..."}
  *
- * Auto-reconnect with exponential backoff on unexpected WebSocket drops.
- * Emits tts-first-chunk and tts-chunk events on the optional event bus.
+ * Legacy protocol (preserved for replay):
+ *   Client -> Server: {"type":"synthesize","text":"...","voice":"..."}
+ *   Server -> Client: {"type":"pcm","data":[...]}
+ *   Server -> Client: {"type":"done"}
+ *   Server -> Client: {"type":"error","message":"..."}
+ *
+ * One active stream at a time. Auto-reconnect with exponential backoff.
+ * Emits TTS debug events on the optional event bus.
  */
 export class KyutaiBackend extends TTSEngine {
   /** @type {string} */
@@ -47,8 +59,28 @@ export class KyutaiBackend extends TTSEngine {
   /** @type {(() => void) | null} */
   #onReconnect = null;
 
-  // Active stream state for re-subscribe after reconnect
-  /** @type {{ text: string, voice: string } | null} */
+  // Active stream mode: 'none' | 'synthesize' (old) | 'stream' (new)
+  /** @type {'none' | 'synthesize' | 'stream'} */
+  #streamMode = 'none';
+
+  // Old-path callbacks (startStream)
+  /** @type {((pcm: Float32Array, sampleRate: number) => void) | null} */
+  #currentOnChunk = null;
+  /** @type {(() => void) | null} */
+  #currentOnDone = null;
+  /** @type {((msg: string) => void) | null} */
+  #currentOnError = null;
+
+  // New-path callbacks (openStream)
+  /** @type {{ onAudioChunk: (pcm: Float32Array, sampleRate: number) => void, onDone: () => void, onError: (msg: string) => void } | null} */
+  #streamCallbacks = null;
+  /** @type {boolean} */
+  #streamHandleClosed = false;
+
+  // Stream state for reconnect re-subscribe
+  // For 'synthesize' mode: { text, voice }
+  // For 'stream' mode: { voice }
+  /** @type {{ text?: string, voice: string } | null} */
   #activeStreamState = null;
 
   // Event bus
@@ -62,14 +94,6 @@ export class KyutaiBackend extends TTSEngine {
   #streamStartTime = 0;
   /** @type {boolean} */
   #firstChunkEmitted = false;
-
-  /** Callbacks for the current active stream. Cleared on stop() or new startStream(). */
-  /** @type {((pcm: Float32Array, sampleRate: number) => void) | null} */
-  #currentOnChunk = null;
-  /** @type {(() => void) | null} */
-  #currentOnDone = null;
-  /** @type {((msg: string) => void) | null} */
-  #currentOnError = null;
 
   /**
    * @param {{ wsUrl?: string, sampleRate?: number, eventBus?: SimpleEventBus, modelName?: string, onReconnect?: () => void, reconnectBaseDelay?: number }} [opts]
@@ -89,15 +113,13 @@ export class KyutaiBackend extends TTSEngine {
   get _testDestroyed() { return this.#destroyed; }
 
   /**
-   * Open WebSocket connection to the TTS server.
-   * Resolves when connection is established.
-   * Idempotent — subsequent calls are no-ops if already connected.
+   * Open WebSocket connection to TTS server.
+   * Idempotent — resolves immediately if already connected.
    * @returns {Promise<void>}
    */
   async load() {
     if (this.#ws && this.#ws.readyState === WebSocket.OPEN) return;
 
-    // Clean up any stale connection
     if (this.#ws) {
       this.#ws.onopen = null;
       this.#ws.onmessage = null;
@@ -114,15 +136,20 @@ export class KyutaiBackend extends TTSEngine {
       ws.onopen = () => {
         this.#loaded = true;
         this.#reconnectAttempt = 0;
+        this.#eventBus?.emit("tts-connect", { modelName: this.#modelName });
 
-        // Re-send active stream if one was in progress
+        // Re-subscribe active stream state after reconnect
         if (this.#activeStreamState) {
-          const msg = JSON.stringify({
-            type: "synthesize",
-            text: this.#activeStreamState.text,
-            voice: this.#activeStreamState.voice,
-          });
-          ws.send(msg);
+          if (this.#streamMode === 'stream') {
+            this.#streamHandleClosed = false;
+            ws.send(JSON.stringify({ type: "open_stream", voice: this.#activeStreamState.voice }));
+          } else {
+            ws.send(JSON.stringify({
+              type: "synthesize",
+              text: this.#activeStreamState.text || "",
+              voice: this.#activeStreamState.voice,
+            }));
+          }
           this.#firstChunkEmitted = false;
           this.#streamStartTime = Date.now();
         }
@@ -131,8 +158,7 @@ export class KyutaiBackend extends TTSEngine {
         resolve();
       };
 
-      ws.onerror = (ev) => {
-        // Only reject if we haven't connected yet
+      ws.onerror = () => {
         if (!this.#loaded) {
           reject(new Error("TTS server unreachable"));
         }
@@ -145,7 +171,6 @@ export class KyutaiBackend extends TTSEngine {
         try {
           data = JSON.parse(/** @type {string} */ (ev.data));
         } catch {
-          // Ignore non-JSON messages
           return;
         }
 
@@ -153,6 +178,7 @@ export class KyutaiBackend extends TTSEngine {
 
         if (msgType === "pcm") {
           const pcmArray = new Float32Array(data.data);
+
           // Emit TTS events
           if (this.#eventBus && this.#modelName) {
             if (!this.#firstChunkEmitted) {
@@ -168,24 +194,44 @@ export class KyutaiBackend extends TTSEngine {
               bytesReceived: pcmArray.byteLength,
             });
           }
-          this.#currentOnChunk?.(pcmArray, this.#sampleRate);
+
+          // Route to active stream callbacks
+          if (this.#streamMode === 'stream' && this.#streamCallbacks) {
+            this.#streamCallbacks.onAudioChunk(pcmArray, this.#sampleRate);
+          } else {
+            this.#currentOnChunk?.(pcmArray, this.#sampleRate);
+          }
         } else if (msgType === "done") {
-          const done = this.#currentOnDone;
-          this.#clearCurrentStream();
-          done?.();
+          if (this.#streamMode === 'stream') {
+            const cb = this.#streamCallbacks?.onDone;
+            this.#clearCurrentStream();
+            cb?.();
+            this.#eventBus?.emit("tts-done", { modelName: this.#modelName });
+          } else {
+            const done = this.#currentOnDone;
+            this.#clearCurrentStream();
+            done?.();
+          }
         } else if (msgType === "error") {
           const msg = data.message || "Unknown TTS error";
-          const err = this.#currentOnError;
-          this.#clearCurrentStream();
-          err?.(msg);
+          if (this.#streamMode === 'stream') {
+            const cb = this.#streamCallbacks?.onError;
+            this.#clearCurrentStream();
+            cb?.(msg);
+          } else {
+            const err = this.#currentOnError;
+            this.#clearCurrentStream();
+            err?.(msg);
+          }
+          this.#eventBus?.emit("tts-error", { modelName: this.#modelName, message: msg });
         }
       };
 
       ws.onclose = () => {
         this.#loaded = false;
         this.#ws = null;
+        this.#eventBus?.emit("tts-disconnect", { modelName: this.#modelName });
 
-        // If not intentionally destroyed, schedule reconnect
         if (!this.#destroyed) {
           this.#scheduleReconnect();
         }
@@ -194,11 +240,11 @@ export class KyutaiBackend extends TTSEngine {
   }
 
   /**
-   * Schedule a reconnect attempt with exponential backoff.
+   * Schedule reconnect with exponential backoff.
    */
   #scheduleReconnect() {
     if (this.#destroyed) return;
-    if (this.#reconnectTimer) return; // already scheduled
+    if (this.#reconnectTimer) return;
 
     const delay = Math.min(
       this.#reconnectBaseDelay * Math.pow(2, this.#reconnectAttempt),
@@ -212,22 +258,22 @@ export class KyutaiBackend extends TTSEngine {
     }, delay);
   }
 
-  /**
-   * Attempt to reconnect.
-   */
   async #doReconnect() {
     if (this.#destroyed) return;
     try {
       await this.load();
     } catch {
-      // load() failed — schedule another attempt
       this.#scheduleReconnect();
     }
   }
 
+  // ------------------------------------------------------------------
+  // Old API (preserved for replay)
+  // ------------------------------------------------------------------
+
   /**
-   * Begin streaming TTS synthesis for the given text.
-   * If a previous stream is active, it is replaced.
+   * Legacy single-shot synthesis. Preserved for replay.
+   * Sends full text via `synthesize` message.
    *
    * @param {string} text
    * @param {string} voice
@@ -239,42 +285,81 @@ export class KyutaiBackend extends TTSEngine {
     this.#stopped = false;
     this.#firstChunkEmitted = false;
     this.#streamStartTime = Date.now();
+    this.#streamMode = 'synthesize';
 
     this.#currentOnChunk = onAudioChunk;
     this.#currentOnDone = callbacks?.onDone || null;
     this.#currentOnError = callbacks?.onError || null;
-
-    // Save stream state for re-subscribe after reconnect
     this.#activeStreamState = { text, voice };
 
     if (!this.#ws || this.#ws.readyState !== WebSocket.OPEN) {
-      // Not connected — fire error and return
       this.#currentOnError?.("TTS server not connected");
       this.#clearCurrentStream();
       return;
     }
 
-    const message = JSON.stringify({
-      type: "synthesize",
-      text,
-      voice,
-    });
-
-    this.#ws.send(message);
+    this.#ws.send(JSON.stringify({ type: "synthesize", text, voice }));
   }
 
   /**
-   * Abort the current stream.
-   * Stops delivering PCM chunks. The WebSocket connection stays open.
+   * Abort the current stream (both old and new paths).
+   * Stops delivering chunks. WebSocket stays open.
    */
   stop() {
     this.#stopped = true;
     this.#clearCurrentStream();
   }
 
+  // ------------------------------------------------------------------
+  // New streaming API
+  // ------------------------------------------------------------------
+
   /**
-   * Close the WebSocket connection and release resources.
-   * Prevents auto-reconnect.
+   * Open a streaming TTS session.
+   *
+   * Sends `open_stream` message. Returns a handle for incremental text
+   * feeding. Only one active stream per backend at a time.
+   *
+   * @param {string} voice
+   * @param {{ onAudioChunk: (pcm: Float32Array, sampleRate: number) => void, onDone: () => void, onError: (message: string) => void }} callbacks
+   * @returns {StreamHandle}
+   */
+  openStream(voice, { onAudioChunk, onDone, onError }) {
+    this.#clearCurrentStream();
+    this.#stopped = false;
+    this.#firstChunkEmitted = false;
+    this.#streamStartTime = Date.now();
+    this.#streamMode = 'stream';
+    this.#streamHandleClosed = false;
+
+    this.#streamCallbacks = { onAudioChunk, onDone, onError };
+    this.#activeStreamState = { voice };
+
+    if (this.#ws && this.#ws.readyState === WebSocket.OPEN) {
+      this.#ws.send(JSON.stringify({ type: "open_stream", voice }));
+    }
+
+    // Return stream handle
+    const self = this;
+    return {
+      sendText(text) {
+        if (self.#streamMode !== 'stream' || self.#streamHandleClosed) return;
+        if (self.#ws && self.#ws.readyState === WebSocket.OPEN) {
+          self.#ws.send(JSON.stringify({ type: "text", data: text }));
+        }
+      },
+      close() {
+        if (self.#streamMode !== 'stream' || self.#streamHandleClosed) return;
+        self.#streamHandleClosed = true;
+        if (self.#ws && self.#ws.readyState === WebSocket.OPEN) {
+          self.#ws.send(JSON.stringify({ type: "close_stream" }));
+        }
+      },
+    };
+  }
+
+  /**
+   * Close the WebSocket connection. Prevents auto-reconnect.
    */
   destroy() {
     this.#destroyed = true;
@@ -298,11 +383,13 @@ export class KyutaiBackend extends TTSEngine {
     this.#activeStreamState = null;
   }
 
-  /** Clear active stream callbacks without closing WebSocket. */
+  /** Clear active stream callbacks. Does NOT clear #activeStreamState (for reconnect). */
   #clearCurrentStream() {
+    this.#streamMode = 'none';
     this.#currentOnChunk = null;
     this.#currentOnDone = null;
     this.#currentOnError = null;
-    // Note: #activeStreamState is NOT cleared here so reconnect can re-send
+    this.#streamCallbacks = null;
+    this.#streamHandleClosed = false;
   }
 }

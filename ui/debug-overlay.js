@@ -116,8 +116,12 @@ export class DebugOverlay {
     this.#eventBus = bus;
     this.#unsubs.push(
       bus.on("token", (data) => this.#onToken(data)),
+      bus.on("tts-connect", (data) => this.#onTtsConnect(data)),
+      bus.on("tts-disconnect", (data) => this.#onTtsDisconnect(data)),
       bus.on("tts-first-chunk", (data) => this.#onTtsFirstChunk(data)),
       bus.on("tts-chunk", (data) => this.#onTtsChunk(data)),
+      bus.on("tts-done", (data) => this.#onTtsDone(data)),
+      bus.on("tts-text-sent", (data) => this.#onTtsTextSent(data)),
       bus.on("pipeline-progress", (data) => this.#onProgress(data)),
       bus.on("pipeline-error", (data) => this.#onError(data))
     );
@@ -130,6 +134,53 @@ export class DebugOverlay {
     this.#tokenCounts.clear();
     const modelsContainer = this.#panel.querySelector(".debug-models");
     if (modelsContainer) modelsContainer.innerHTML = "";
+  }
+
+  /**
+   * @param {{ modelName: string }} data
+   */
+  #onTtsConnect(data) {
+    const card = this.#ensureCard(data.modelName);
+    const el = /** @type {HTMLElement | null} */ (card.querySelector(".debug-row-value--status"));
+    if (el) {
+      el.textContent = "connected";
+      el.style.color = "#4caf50";
+    }
+  }
+
+  /**
+   * @param {{ modelName: string }} data
+   */
+  #onTtsDisconnect(data) {
+    const card = this.#ensureCard(data.modelName);
+    const el = /** @type {HTMLElement | null} */ (card.querySelector(".debug-row-value--status"));
+    if (el) {
+      el.textContent = "disconnected";
+      el.style.color = "#ff5722";
+    }
+  }
+
+  /**
+   * @param {{ modelName: string }} data
+   */
+  #onTtsDone(data) {
+    const card = this.#ensureCard(data.modelName);
+    const el = /** @type {HTMLElement | null} */ (card.querySelector(".debug-row-value--status"));
+    if (el) {
+      el.textContent = "done";
+      el.style.color = "#8bc34a";
+    }
+  }
+
+  /**
+   * @param {{ modelName: string, chars: number, words: number }} data
+   */
+  #onTtsTextSent(data) {
+    const card = this.#ensureCard(data.modelName);
+    const el = card.querySelector(".debug-row-value--text");
+    if (el) {
+      el.textContent = `${data.chars} chars`;
+    }
   }
 
   /**
@@ -224,9 +275,11 @@ export class DebugOverlay {
     card.className = "debug-model-card";
     card.innerHTML = `
       <div class="debug-model-name">${modelName}</div>
+      <div class="debug-row"><span class="debug-row-label">Status</span><span class="debug-row-value debug-row-value--status">—</span></div>
       <div class="debug-row"><span class="debug-row-label">Progress</span><span class="debug-row-value debug-row-value--progress">—</span></div>
       <div class="debug-row"><span class="debug-row-label">TTS Latency</span><span class="debug-row-value debug-row-value--latency">—</span></div>
       <div class="debug-row"><span class="debug-row-label">Audio</span><span class="debug-row-value debug-row-value--chunks">—</span></div>
+      <div class="debug-row"><span class="debug-row-label">Text sent</span><span class="debug-row-value debug-row-value--text">—</span></div>
       <div class="debug-errors"></div>
     `;
     container?.appendChild(card);

@@ -2,6 +2,7 @@
  * @typedef {Object} AudioGraphChannel
  * @property {(buffer: AudioBuffer, onEnd?: () => void) => AudioBufferSourceNode} play
  * @property {(streamFn: (onChunk: (pcm: Float32Array, sampleRate: number) => void) => (() => void)) => { stop: () => void }} playStream
+ * @property {() => { feed: (pcm: Float32Array, sampleRate: number) => void, end: () => void, stop: () => void }} openStream
  * @property {AnalyserNode} analyser
  * @property {GainNode} gain
  * @property {() => void} stopAll
@@ -69,7 +70,8 @@ export class AudioGraph {
     /**
      * Play an AudioBuffer through this channel.
      * @param {AudioBuffer} buffer
-     * @param {() => void} [onEnd] - called when playback finishes
+     * @param {() => void} [onEnd]
+     * @returns {AudioBufferSourceNode}
      */
     const play = (buffer, onEnd) => {
       this.#activeCount++;
@@ -94,7 +96,7 @@ export class AudioGraph {
     /** Stop all currently-playing sources on this channel. */
     const stopAll = () => {
       for (const source of activeSources) {
-        try { source.stop(); } catch {} // already stopped is fine
+        try { source.stop(); } catch {}
         activeSources.delete(source);
       }
     };
@@ -103,8 +105,6 @@ export class AudioGraph {
      * Stream PCM chunks for continuous playback via a ring-buffer approach.
      *
      * @param {(onChunk: (pcm: Float32Array, sampleRate: number) => void) => (() => void)} streamFn
-     *   - Receives onChunk callback to deliver Float32Array PCM frames
-     *   - Returns a cleanup function called on stop
      * @returns {{ stop: () => void }}
      */
     const playStream = (streamFn) => {
@@ -117,25 +117,14 @@ export class AudioGraph {
       let cleanupFn = null;
 
       /**
-       * Deliver a PCM chunk for playback.
-       * Creates an AudioBuffer and schedules an AudioBufferSourceNode.
-       * @param {Float32Array} pcm - Float32 PCM samples
-       * @param {number} sampleRate - Sample rate of the PCM data
+       * @param {Float32Array} pcm
+       * @param {number} sampleRate
        */
       const onChunk = (pcm, sampleRate) => {
         if (stopped) return;
 
-        // Create an AudioBuffer from PCM data
-        let buffer;
-        if (sampleRate === ctx.sampleRate) {
-          buffer = ctx.createBuffer(1, pcm.length, sampleRate);
-          buffer.getChannelData(0).set(pcm);
-        } else {
-          // Resample by creating at source rate then letting the context handle it?
-          // For simplicity, create at source rate — the AudioContext will resample.
-          buffer = ctx.createBuffer(1, pcm.length, sampleRate);
-          buffer.getChannelData(0).set(pcm);
-        }
+        const buffer = ctx.createBuffer(1, pcm.length, sampleRate);
+        buffer.getChannelData(0).set(pcm);
 
         const source = ctx.createBufferSource();
         source.buffer = buffer;
@@ -152,18 +141,15 @@ export class AudioGraph {
         };
       };
 
-      // Start the stream by calling the stream function with our onChunk callback
       cleanupFn = streamFn(onChunk);
 
       return {
         stop: () => {
           stopped = true;
-          // Call the cleanup function from the stream
           if (cleanupFn) {
             try { cleanupFn(); } catch {}
             cleanupFn = null;
           }
-          // Stop all active sources
           for (const source of sources) {
             try { source.stop(); } catch {}
             sources.delete(source);
@@ -176,26 +162,93 @@ export class AudioGraph {
       };
     };
 
-    return { play, playStream, analyser, gain, stopAll };
+    /**
+     * Live streaming PCM feed.
+     *
+     * Designed for the new streaming TTS path: PCM frames arrive asynchronously
+     * from WebSocket onmessage. Each `feed()` call creates and schedules an
+     * AudioBufferSourceNode.
+     *
+     * @returns {{ feed: (pcm: Float32Array, sampleRate: number) => void, end: () => void, stop: () => void }}
+     */
+    const openStream = () => {
+      this.#activeCount++;
+      this.#updateDucking();
+
+      const sources = new Set();
+      let ended = false;
+      let stopped = false;
+
+      /**
+       * Feed a PCM frame for playback.
+       * @param {Float32Array} pcm - Float32 PCM samples
+       * @param {number} sampleRate - Sample rate of the PCM data
+       */
+      const feed = (pcm, sampleRate) => {
+        if (stopped || ended) return;
+
+        const buffer = ctx.createBuffer(1, pcm.length, sampleRate);
+        buffer.getChannelData(0).set(pcm);
+
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(gain);
+        source.start();
+        sources.add(source);
+
+        source.onended = () => {
+          sources.delete(source);
+        };
+      };
+
+      /**
+       * Signal no more frames. Decrements activeCount.
+       */
+      const end = () => {
+        if (ended || stopped) return;
+        ended = true;
+        this.#activeCount = Math.max(0, this.#activeCount - 1);
+        this.#updateDucking();
+      };
+
+      /**
+       * Immediate kill — stop all sources, decrement activeCount.
+       */
+      const stop = () => {
+        if (stopped) return;
+        stopped = true;
+        for (const source of sources) {
+          try { source.stop(); } catch {}
+          sources.delete(source);
+        }
+        if (!ended) {
+          this.#activeCount = Math.max(0, this.#activeCount - 1);
+          this.#updateDucking();
+        }
+      };
+
+      return { feed, end, stop };
+    };
+
+    return { play, playStream, openStream, analyser, gain, stopAll };
   }
 
   get activeCount() {
     return this.#activeCount;
   }
 
-  /** Remove all channels and disconnect their nodes. Stops any playing audio. */
+  /** Remove all channels, disconnect nodes, stop audio. */
   clearChannels() {
     for (const ch of this.#channels) {
       ch.stopAll?.();
-      try { ch.gain.disconnect(); } catch {} // already disconnected is fine
+      try { ch.gain.disconnect(); } catch {}
     }
     this.#channels.length = 0;
     this.#activeCount = 0;
   }
 
-  /** Close the AudioContext and release resources. */
+  /** Close AudioContext and release resources. */
   destroy() {
-    // Tear down channels before closing context
     this.clearChannels();
     if (this.#ctx) {
       this.#ctx.close();
@@ -206,7 +259,7 @@ export class AudioGraph {
     }
   }
 
-  /** Set up tab visibility handling to keep AudioContext alive. */
+  /** Handle tab visibility for AudioContext resume. */
   enableTabResume() {
     this.#visibilityHandler = () => {
       if (document.visibilityState === "visible" && this.#ctx?.state === "suspended") {

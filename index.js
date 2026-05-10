@@ -76,7 +76,15 @@ historyBtn.addEventListener("click", () => {
 // --- Audio + TTS ---
 const audioGraph = new AudioGraph();
 audioGraph.enableTabResume();
-const ttsEngine = new KyutaiBackend({ wsUrl: config.tts.wsUrl });
+
+// Per-model KyutaiBackend instances (3 WebSocket connections)
+const ttsEngines = new Map();
+for (const model of config.models) {
+  ttsEngines.set(
+    model.name,
+    new KyutaiBackend({ wsUrl: config.tts.wsUrl, modelName: model.name })
+  );
+}
 
 // --- Orchestrator ---
 const orchestrator = new Orchestrator({
@@ -85,7 +93,7 @@ const orchestrator = new Orchestrator({
   ttsConfig: config.tts,
   audioGraph,
   columns,
-  ttsEngine,
+  ttsEngines,
   storage: store,
 });
 
