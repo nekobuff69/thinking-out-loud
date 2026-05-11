@@ -119,12 +119,22 @@ class TTSGen:
         self.error: str | None = None
         self._done_sent = False   # guard against sending done twice
 
-        # Reset model KV caches & Mimi state for fresh generation
-        for c in tts_model.lm.transformer_cache:
-            c.reset()
-        for c in tts_model.lm.depformer_cache:
-            c.reset()
-        tts_model.mimi.reset_all()
+        # Warmup state: starts cold, graduates after first audio frame
+        self.warmed_up = False
+
+        # Create isolated per-gen KV cache bundles (not shared)
+        # Each gen gets fresh caches so concurrent gens don't corrupt each other's state.
+        self.transformer_cache = tts_model.lm.transformer.make_rot_cache()
+        if len(tts_model.lm.depformer.slices) > 0:
+            self.depformer_cache = tts_model.lm.depformer.slices[0].transformer.make_cache()
+        else:
+            self.depformer_cache = []
+
+        # Create isolated per-gen Mimi instance (shared weights, independent state)
+        # Mimi has stateful conv layers — each gen needs its own state.
+        gcb = tts_model.lm.cfg.audio_codebooks
+        self.mimi = Mimi(mimi_202407(gcb))
+        self.mimi.update(tts_model.mimi.parameters())
 
         log("STREAM", f"{model_label} TTSGen ready for voice '{voice}'")
 
@@ -165,6 +175,20 @@ class TTSGen:
             self.cross_attention_src = mx.concatenate(ca_list, axis=0)
         else:
             self.cross_attention_src = mx.zeros((len(attrs), 0, 0))
+
+    # ------------------------------------------------------------------
+    # Cache swapping
+    # ------------------------------------------------------------------
+
+    def _swap_caches_in(self):
+        """Swap per-gen KV cache bundles into shared model before step().
+
+        Pointer swap — no data copying. After step(), caches are updated
+        in-place on the gen's own cache objects. The shared model's weight
+        matrices remain shared and read-only across all gens.
+        """
+        self.tts_model.lm.transformer_cache = self.transformer_cache
+        self.tts_model.lm.depformer_cache = self.depformer_cache
 
     # ------------------------------------------------------------------
     # LMGen hooks (called inside LmGen._step during model forward pass)
@@ -243,6 +267,8 @@ class TTSGen:
         inp = mx.ones((1, missing), dtype=mx.int64) * self.tts_model.machine.token_ids.zero
 
         try:
+            # Swap per-gen caches into the shared model before the forward pass
+            self._swap_caches_in()
             self.lm_gen.step(inp, ct=self.ct, cross_attention_src=self.cross_attention_src)
         except Exception as exc:
             log("ERROR", f"{self.model_label} step: {exc}")
@@ -260,9 +286,12 @@ class TTSGen:
             # desynchronizes the decoder, causing crackles).
             # But discard padding PCM — it's garble, not real speech.
             frame_3d = mx.array(frame)[:, :, None]
-            pcm = np.array(self.tts_model.mimi.decode_step(frame_3d)).astype(np.float32)
+            pcm = np.array(self.mimi.decode_step(frame_3d)).astype(np.float32)
             if not is_padding_step:
                 pcm_out.append(pcm.flatten().tolist())
+                if not self.warmed_up:
+                    log("WARMUP", f"{self.model_label} complete — first audio frame")
+                    self.warmed_up = True
 
         return pcm_out
 
@@ -476,7 +505,13 @@ class KyutaiStreamingServer:
     # ------------------------------------------------------------------
 
     def _stepping_loop(self) -> None:
-        """Round-robin: each active TTSGen gets one MLX step per round."""
+        """Round-robin with exclusive warmup for new TTSGens.
+
+        New TTSGens require ~30 acoustic-delay steps before producing any audio.
+        They are run in a tight exclusive loop until first audio frame (warmed_up)
+        to avoid 7+ second initial silence from round-robin interleaving.
+        Once graduated, they join the normal round-robin cycle.
+        """
         log("GEN", "Stepping loop start")
         while self._stepping:
             loop = self._loop
@@ -497,7 +532,52 @@ class KyutaiStreamingServer:
             to_remove: list[int] = []
             now = time.time()
 
-            for ck, g in snap:
+            # --- Exclusive warmup for non-warmed-up gens ---
+            # Run each cold gen in a tight exclusive loop until it produces
+            # its first audio frame, graduates to warmed_up, or finishes.
+            not_warmed = [
+                (ck, g) for ck, g in snap
+                if not g.warmed_up and g.alive and not g.done
+            ]
+            for ck, g in not_warmed:
+                log("WARMUP", f"{g.model_label} warmup start")
+                while not g.warmed_up and g.alive and not g.done:
+                    frames = g.step()
+                    if frames:
+                        any_work = True
+                        q = self._pcm_queues.get(ck)
+                        if q is not None:
+                            for pcm in frames:
+                                loop.call_soon_threadsafe(q.put_nowait,
+                                                          {"type": "pcm", "data": pcm})
+
+                    # Check completion during warmup
+                    if g.done and g.error is None and not g._done_sent:
+                        g._done_sent = True
+                        q = self._pcm_queues.get(ck)
+                        if q is not None:
+                            if g.closed:
+                                log("GEN", f"{g.model_label} done (warmup)")
+                                loop.call_soon_threadsafe(q.put_nowait,
+                                                          {"type": "done"})
+                        to_remove.append(ck)
+                        break
+                    elif g.error is not None:
+                        log("ERROR", f"{g.model_label} fail (warmup): {g.error}")
+                        q = self._pcm_queues.get(ck)
+                        if q is not None:
+                            loop.call_soon_threadsafe(q.put_nowait,
+                                                      {"type": "error",
+                                                       "message": g.error})
+                        to_remove.append(ck)
+                        break
+
+            # --- Round-robin for warmed-up gens ---
+            warmed = [
+                (ck, g) for ck, g in snap
+                if g.warmed_up and g.alive and not g.done
+            ]
+            for ck, g in warmed:
                 # Warn if text paused for 5+ seconds
                 if g.alive and not g.closed and not g._no_text_warned:
                     idle = now - g._last_append_time
@@ -513,7 +593,8 @@ class KyutaiStreamingServer:
                     q = self._pcm_queues.get(ck)
                     if q is not None:
                         for pcm in frames:
-                            loop.call_soon_threadsafe(q.put_nowait, {"type": "pcm", "data": pcm})
+                            loop.call_soon_threadsafe(q.put_nowait,
+                                                      {"type": "pcm", "data": pcm})
 
                 # Check completion
                 if g.done and g.error is None and not g._done_sent:
@@ -522,7 +603,8 @@ class KyutaiStreamingServer:
                     if q is not None:
                         if g.closed:
                             log("GEN", f"{g.model_label} done")
-                            loop.call_soon_threadsafe(q.put_nowait, {"type": "done"})
+                            loop.call_soon_threadsafe(q.put_nowait,
+                                                      {"type": "done"})
                         else:
                             # stopped, no done message
                             pass
@@ -532,7 +614,9 @@ class KyutaiStreamingServer:
                     log("ERROR", f"{g.model_label} fail: {g.error}")
                     q = self._pcm_queues.get(ck)
                     if q is not None:
-                        loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "message": g.error})
+                        loop.call_soon_threadsafe(q.put_nowait,
+                                                  {"type": "error",
+                                                   "message": g.error})
                     to_remove.append(ck)
 
             # Cleanup finished gens
