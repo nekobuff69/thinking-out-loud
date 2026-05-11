@@ -289,18 +289,35 @@ class TTSGen:
 
         # Check for completed audio frame (after acoustic delay)
         frame = self.lm_gen.last_audio_tokens()
-        if frame is not None and (frame != self.tts_model.machine.token_ids.zero).all():
-            # Always decode through Mimi to keep its internal state in sync
-            # (Mimi uses stateful convolutional layers — skipping frames
-            # desynchronizes the decoder, causing crackles).
-            # But discard padding PCM — it's garble, not real speech.
+        if frame is not None:
+            # ALWAYS decode through Mimi to keep its internal state in sync.
+            # Mimi uses stateful causal convolutions (StreamableConv1d,
+            # StreamableConvTranspose1d) that accumulate _prev_xs/_prev_ys
+            # per frame. Skipping any frame desynchronizes the decoder,
+            # corrupting ALL subsequent audio with crackles and garble.
+            #
+            # Previously gated Mimi decode on `(frame != zero).all()` which
+            # skipped decode on zero-token frames (acoustic delay). This
+            # caused Mimi state desync → persistent crackles.
+            #
+            # PCM delivery is gated separately: during acoustic delay,
+            # _on_audio_hook zeros out codebook tokens that haven't reached
+            # their delay offset. Decoding these zero-token frames through
+            # Mimi produces non-speech garbage (not silence — garbled noise).
+            # The PCM is discarded until the first non-zero audio token
+            # indicates real speech has begun.
             frame_3d = mx.array(frame)[:, :, None]
             pcm = np.array(self.mimi.decode_step(frame_3d)).astype(np.float32)
             if not is_padding_step:
-                pcm_out.append(pcm.flatten().tolist())
-                if not self.warmed_up:
-                    log("WARMUP", f"{self.model_label} complete — first audio frame")
-                    self.warmed_up = True
+                # Only deliver PCM for frames with real audio content.
+                # Zero-token frames (acoustic delay) are decoded for state
+                # sync but their PCM is garbage — discard it.
+                has_audio = self.warmed_up or (frame != self.tts_model.machine.token_ids.zero).any()
+                if has_audio:
+                    pcm_out.append(pcm.flatten().tolist())
+                    if not self.warmed_up:
+                        log("WARMUP", f"{self.model_label} complete — first audio frame")
+                        self.warmed_up = True
 
         return pcm_out
 

@@ -491,6 +491,116 @@ async def test_padding_frame_handling():
     return True
 
 
+async def test_zero_token_frame_still_decodes():
+    """TTSGen.step() calls mimi.decode_step() on EVERY frame, even zero-token.
+
+    Regression test for Mimi codec state desync bug.
+    During acoustic delay, _on_audio_hook zeroes out audio codebook tokens.
+    The old code gated decode on `(frame != zero).all()`, skipping Mimi
+    on zero-token frames. This desynced Mimi's stateful convolutions,
+    corrupting all subsequent audio.
+
+    The fix: always call decode_step(), only gate PCM delivery on padding.
+    This test verifies decode_step is called for zero-token frames during
+    non-padding steps (acoustic delay with entries queued).
+
+    Scenarios:
+      A. Entries queued, frame is all-zero tokens (acoustic delay) →
+         decode_step called, PCM included in output
+      B. Entries queued, frame has mixed zero/non-zero →
+         decode_step called, PCM included
+      C. Padding step (no entries), frame is all-zero →
+         decode_step called, PCM discarded (already covered)
+      D. Frame is None (no audio produced yet) →
+         decode_step NOT called (early return, no frame to decode)
+    """
+    import mlx.core as mx
+
+    tts_model = _create_mock_tts_model()
+
+    with (
+        patch.object(_tts_mod, "LmGen") as mock_lmgen_cls,
+        patch.object(_tts_mod, "Mimi") as mock_mimi_cls,
+        patch.object(_tts_mod, "mimi_202407"),
+    ):
+        lm_gen_instance = MagicMock()
+        lm_gen_instance.step_idx = 0
+        lm_gen_instance.step = MagicMock()
+        mock_lmgen_cls.return_value = lm_gen_instance
+
+        mimi_mock = MagicMock()
+        mimi_mock.decode_step.return_value = [[0.1, 0.2]]
+        mock_mimi_cls.return_value = mimi_mock
+
+        gen = TTSGen(tts_model, "voice1", "gen1")
+
+        # Feed entries so steps are NOT padding
+        gen.state.entries.append(MagicMock())
+
+        # --- Scenario A: all-zero token frame (acoustic delay period) ---
+        mimi_mock.decode_step.reset_mock()
+        # Simulate acoustic delay: _on_audio_hook zeroes all codebook tokens
+        lm_gen_instance.last_audio_tokens.return_value = mx.array(
+            [[0, 0, 0], [0, 0, 0]]  # all codebooks = 0
+        )
+        pcm_a = gen.step()
+
+        assert mimi_mock.decode_step.called, (
+            "A: decode_step MUST be called for zero-token frame (codec sync)"
+        )
+        assert len(pcm_a) == 0, (
+            "A: PCM MUST NOT be delivered for zero-token frame (acoustic delay garbage)"
+        )
+
+        # --- Scenario B: mixed zero/non-zero frame (first real audio) ---
+        mimi_mock.decode_step.reset_mock()
+        lm_gen_instance.last_audio_tokens.return_value = mx.array(
+            [[1, 0, 0], [0, 0, 0]]  # at least one non-zero token
+        )
+        pcm_b = gen.step()
+
+        assert mimi_mock.decode_step.called, (
+            "B: decode_step must be called for mixed zero/non-zero frame"
+        )
+        assert len(pcm_b) > 0, (
+            "B: PCM SHOULD be output when frame has non-zero tokens (real audio)"
+        )
+
+        # --- Scenario C: fully non-zero frame (steady state after warmup) ---
+        mimi_mock.decode_step.reset_mock()
+        lm_gen_instance.last_audio_tokens.return_value = mx.array(
+            [[5, 3, 7], [2, 8, 1]]  # all non-zero
+        )
+        pcm_c = gen.step()
+
+        assert mimi_mock.decode_step.called, (
+            "C: decode_step must be called for non-zero frame"
+        )
+        assert len(pcm_c) > 0, (
+            "C: PCM should be output for non-zero frame (real audio)"
+        )
+
+        # --- Scenario D: frame is None (no audio produced yet) ---
+        mimi_mock.decode_step.reset_mock()
+        lm_gen_instance.last_audio_tokens.return_value = None
+        pcm_d = gen.step()
+
+        assert not mimi_mock.decode_step.called, (
+            "D: decode_step must NOT be called when frame is None"
+        )
+        assert len(pcm_d) == 0, (
+            "D: pcm_out must be empty when frame is None"
+        )
+
+        # Summary
+        print(f"  A: zero-token frame  → decode_step=yes  pcm_out=0  (garbage discarded) ✓")
+        print(f"  B: mixed-token frame  → decode_step=yes  pcm_out>0  (first real audio) ✓")
+        print(f"  C: non-zero frame     → decode_step=yes  pcm_out>0  (steady state) ✓")
+        print(f"  D: frame=None         → decode_step=no   pcm_out=0  (no frame) ✓")
+        print("  PASS: Mimi decode called on every frame, PCM gated on non-zero tokens")
+        return True
+
+
 async def test_warmup_flag():
     """TTSGen.warmed_up starts False, transitions to True after first audio.
 
@@ -736,6 +846,7 @@ async def main():
         # Unit tests (no server needed)
         ("cache_isolation", test_cache_isolation),
         ("padding_frame_handling", test_padding_frame_handling),
+        ("zero_token_frame_still_decodes", test_zero_token_frame_still_decodes),
         ("warmup_flag", test_warmup_flag),
         ("staggered_warmup_loop", test_staggered_warmup_loop),
     ]

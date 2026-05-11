@@ -291,13 +291,16 @@ describe("AudioGraph openStream", () => {
     const channel = graph.createChannel(0.0);
 
     const handle = channel.openStream();
+    // Need 4+ frames to trigger pre-buffer flush (PRE_BUFFER_FRAMES = 4)
     handle.feed(new Float32Array([0.1, 0.2, 0.3]), 24000);
     handle.feed(new Float32Array([0.4, 0.5, 0.6]), 24000);
+    handle.feed(new Float32Array([0.7, 0.8, 0.9]), 24000);
+    handle.feed(new Float32Array([1.0, 1.1, 1.2]), 24000);
 
     await new Promise((r) => setTimeout(r, 20));
 
-    assert.ok(mockCtx.createdBuffers.length >= 2, "buffers created from feed");
-    assert.ok(mockCtx.scheduledSources.length >= 2, "sources scheduled from feed");
+    assert.ok(mockCtx.createdBuffers.length >= 4, "buffers created from feed");
+    assert.ok(mockCtx.scheduledSources.length >= 4, "sources scheduled from feed");
     assert.strictEqual(graph.activeCount, 1);
 
     handle.end();
@@ -391,11 +394,21 @@ describe("AudioGraph openStream", () => {
     const channel = graph.createChannel(0.0);
 
     const handle = channel.openStream();
-    handle.feed(new Float32Array([0.1, 0.2, 0.3]), 24000);
+
+    // Pre-buffer stores frames; nothing scheduled yet
+    handle.feed(new Float32Array([0.1]), 24000);
+    assert.strictEqual(mockCtx.scheduledSources.length, 0,
+      "nothing scheduled before pre-buffer fills");
+
+    // Feed 3 more to hit PRE_BUFFER_FRAMES (4) threshold
+    handle.feed(new Float32Array([0.2]), 24000);
+    handle.feed(new Float32Array([0.3]), 24000);
+    handle.feed(new Float32Array([0.4]), 24000);
 
     await new Promise((r) => setTimeout(r, 20));
 
-    assert.ok(mockCtx.scheduledSources.length >= 1, "should schedule at least 1 source");
+    assert.ok(mockCtx.scheduledSources.length >= 4,
+      "should schedule all buffered frames");
     // First buffer starts at ctx.currentTime (0 in mock)
     assert.strictEqual(mockCtx.scheduledSources[0].when, 0,
       "first buffer scheduled at ctx.currentTime");
@@ -409,32 +422,125 @@ describe("AudioGraph openStream", () => {
 
     const handle = channel.openStream();
 
-    // Feed two PCM chunks with known durations
-    const pcm1 = new Float32Array([0.1, 0.2, 0.3]);   // 3 samples
-    const pcm2 = new Float32Array([0.4, 0.5, 0.6, 0.7]);  // 4 samples
+    // Feed 4 PCM chunks with known durations to trigger pre-buffer flush
+    const pcm1 = new Float32Array([0.1, 0.2, 0.3]);         // 3 samples
+    const pcm2 = new Float32Array([0.4, 0.5, 0.6, 0.7]);    // 4 samples
+    const pcm3 = new Float32Array([0.8, 0.9]);               // 2 samples
+    const pcm4 = new Float32Array([1.0, 1.1, 1.2, 1.3, 1.4]); // 5 samples
     const sampleRate = 24000;
 
     handle.feed(pcm1, sampleRate);
     handle.feed(pcm2, sampleRate);
+    handle.feed(pcm3, sampleRate);
+    handle.feed(pcm4, sampleRate);
 
     await new Promise((r) => setTimeout(r, 20));
 
-    assert.ok(mockCtx.scheduledSources.length >= 2, "should schedule 2 sources");
+    assert.ok(mockCtx.scheduledSources.length >= 4,
+      "should schedule all 4 buffered frames");
 
     // First buffer always starts at ctx.currentTime
     assert.strictEqual(mockCtx.scheduledSources[0].when, 0,
       "first buffer starts at currentTime");
 
-    // Second buffer starts after first buffer ends — non-overlapping
-    const buf1Duration = pcm1.length / sampleRate;
-    assert.ok(mockCtx.scheduledSources[1].when >= mockCtx.scheduledSources[0].when + buf1Duration,
-      "second buffer starts after first buffer ends (no overlap)");
-
-    // Third+ buffers (if any) continue the monotonic sequence
-    for (let i = 2; i < mockCtx.scheduledSources.length; i++) {
-      assert.ok(mockCtx.scheduledSources[i].when >= mockCtx.scheduledSources[i - 1].when,
-        `buffer ${i} starts at or after buffer ${i - 1}`);
+    // Each subsequent buffer starts after the previous one ends (non-overlapping)
+    const durations = [pcm1, pcm2, pcm3, pcm4].map(p => p.length / sampleRate);
+    for (let i = 1; i < mockCtx.scheduledSources.length; i++) {
+      const expectedStart = durations.slice(0, i).reduce((sum, d) => sum + d, 0);
+      assert.ok(mockCtx.scheduledSources[i].when >= expectedStart,
+        `buffer ${i} starts at or after previous buffer end (no overlap)`);
     }
+
+    handle.end();
+  });
+
+  it("openStream pre-buffer: <4 feeds schedules nothing", async () => {
+    const graph = new AudioGraph();
+    const channel = graph.createChannel(0.0);
+
+    const handle = channel.openStream();
+    handle.feed(new Float32Array([0.1]), 24000);
+    handle.feed(new Float32Array([0.2]), 24000);
+    handle.feed(new Float32Array([0.3]), 24000);
+
+    assert.strictEqual(mockCtx.scheduledSources.length, 0,
+      "no sources scheduled before 4th feed");
+    assert.strictEqual(mockCtx.createdBuffers.length, 0,
+      "no buffers created before 4th feed");
+
+    handle.end();
+  });
+
+  it("openStream pre-buffer: 4th feed triggers flush, all scheduled gapless", async () => {
+    const graph = new AudioGraph();
+    const channel = graph.createChannel(0.0);
+
+    const handle = channel.openStream();
+    handle.feed(new Float32Array([0.1]), 24000);
+    handle.feed(new Float32Array([0.2]), 24000);
+    handle.feed(new Float32Array([0.3]), 24000);
+    assert.strictEqual(mockCtx.scheduledSources.length, 0,
+      "still nothing before 4th");
+
+    // 4th feed triggers flush
+    handle.feed(new Float32Array([0.4]), 24000);
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.strictEqual(mockCtx.scheduledSources.length, 4,
+      "all 4 frames scheduled after flush");
+    assert.strictEqual(mockCtx.scheduledSources[0].when, 0,
+      "first at currentTime");
+    // Each subsequent frame starts after previous ends
+    for (let i = 1; i < 4; i++) {
+      assert.ok(mockCtx.scheduledSources[i].when > mockCtx.scheduledSources[i - 1].when,
+        `source ${i} after source ${i - 1}`);
+    }
+
+    handle.end();
+  });
+
+  it("openStream pre-buffer: end() flushes remaining frames", async () => {
+    const graph = new AudioGraph();
+    const channel = graph.createChannel(0.0);
+
+    const handle = channel.openStream();
+    handle.feed(new Float32Array([0.1]), 24000);
+    handle.feed(new Float32Array([0.2]), 24000);
+    // Only 2 feeds — pre-buffer not full
+    assert.strictEqual(mockCtx.scheduledSources.length, 0,
+      "nothing before end()");
+
+    // end() should flush remaining pre-buffer
+    handle.end();
+
+    assert.ok(mockCtx.scheduledSources.length >= 2,
+      "end() flushed pre-buffer frames");
+    assert.strictEqual(graph.activeCount, 0,
+      "activeCount decremented after end");
+  });
+
+  it("openStream pre-buffer: feeds after flush schedule immediately", async () => {
+    const graph = new AudioGraph();
+    const channel = graph.createChannel(0.0);
+
+    const handle = channel.openStream();
+    // Fill pre-buffer and trigger flush
+    handle.feed(new Float32Array([0.1]), 24000);
+    handle.feed(new Float32Array([0.2]), 24000);
+    handle.feed(new Float32Array([0.3]), 24000);
+    handle.feed(new Float32Array([0.4]), 24000);
+
+    // After flush, subsequent feeds schedule immediately
+    handle.feed(new Float32Array([0.5]), 24000);
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.ok(mockCtx.scheduledSources.length >= 5,
+      "5th feed schedules immediately (no pre-buffer)");
+    // 5th source starts after 4th ends
+    assert.ok(mockCtx.scheduledSources[4].when > mockCtx.scheduledSources[3].when,
+      "5th frame after 4th gapless");
 
     handle.end();
   });

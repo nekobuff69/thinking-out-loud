@@ -174,11 +174,28 @@ export class AudioGraph {
     };
 
     /**
+     * Number of PCM frames to buffer before starting playback.
+     * Provides a time cushion that absorbs delivery jitter from the
+     * TTS server, preventing buffer underruns that cause stuttering
+     * and repeated audio chunks.
+     *
+     * At 12.5 frames/sec, 4 frames ≈ 320ms of buffered audio.
+     * This trades ~0.3s initial latency for much smoother playback,
+     * especially with 3 concurrent voices competing for GPU time.
+     */
+    const PRE_BUFFER_FRAMES = 4;
+
+    /**
      * Live streaming PCM feed.
      *
      * Designed for the new streaming TTS path: PCM frames arrive asynchronously
      * from WebSocket onmessage. Each `feed()` call creates and schedules an
      * AudioBufferSourceNode.
+     *
+     * Pre-buffers the first PRE_BUFFER_FRAMES frames before scheduling
+     * playback, creating a time cushion that absorbs delivery jitter.
+     * Without pre-buffering, the AudioContext fell behind on every underrun,
+     * causing stuttering and repeated audio chunks.
      *
      * @returns {{ feed: (pcm: Float32Array, sampleRate: number) => void, end: () => void, stop: () => void }}
      */
@@ -194,16 +211,21 @@ export class AudioGraph {
       // play back-to-back without overlap or gaps.
       let nextStartTime = 0;
 
-      /**
-       * Feed a PCM frame for playback.
-       * Schedules each buffer to start immediately after the previous one,
-       * ensuring gapless, non-overlapping audio.
-       * @param {Float32Array} pcm - Float32 PCM samples
-       * @param {number} sampleRate - Sample rate of the PCM data
-       */
-      const feed = (pcm, sampleRate) => {
-        if (stopped || ended) return;
+      // Pre-buffer: accumulate frames before scheduling playback.
+      // This creates a time cushion that absorbs delivery jitter.
+      // Once PRE_BUFFER_FRAMES are collected, all buffered frames
+      // are scheduled starting at ctx.currentTime, and subsequent
+      // frames are scheduled gaplessly from there.
+      /** @type {Array<{pcm: Float32Array, sampleRate: number}>} */
+      let preBuffer = [];
+      let preBufferingDone = false;
 
+      /**
+       * Schedule a single buffer for gapless playback.
+       * @param {Float32Array} pcm
+       * @param {number} sampleRate
+       */
+      const scheduleBuffer = (pcm, sampleRate) => {
         const buffer = ctx.createBuffer(1, pcm.length, sampleRate);
         buffer.getChannelData(0).set(pcm);
 
@@ -227,21 +249,65 @@ export class AudioGraph {
       };
 
       /**
-       * Signal no more frames. Decrements activeCount.
+       * Flush all pre-buffered frames, scheduling them for gapless playback.
+       */
+      const flushPreBuffer = () => {
+        if (preBuffer.length === 0) return;
+        // Start playback at current time — pre-buffer provides cushion
+        const now = ctx.currentTime;
+        if (nextStartTime < now) {
+          nextStartTime = now;
+        }
+        for (const item of preBuffer) {
+          scheduleBuffer(item.pcm, item.sampleRate);
+        }
+        preBuffer = [];
+        preBufferingDone = true;
+      };
+
+      /**
+       * Feed a PCM frame for playback.
+       * Pre-buffers the first PRE_BUFFER_FRAMES frames before scheduling.
+       * @param {Float32Array} pcm - Float32 PCM samples
+       * @param {number} sampleRate - Sample rate of the PCM data
+       */
+      const feed = (pcm, sampleRate) => {
+        if (stopped || ended) return;
+
+        if (!preBufferingDone) {
+          preBuffer.push({ pcm, sampleRate });
+          if (preBuffer.length >= PRE_BUFFER_FRAMES) {
+            flushPreBuffer();
+          }
+          return;
+        }
+
+        scheduleBuffer(pcm, sampleRate);
+      };
+
+      /**
+       * Signal no more frames. Flushes any remaining pre-buffered frames
+       * and decrements activeCount.
        */
       const end = () => {
         if (ended || stopped) return;
+        // Flush any remaining pre-buffered frames before ending
+        if (!preBufferingDone && preBuffer.length > 0) {
+          flushPreBuffer();
+        }
         ended = true;
         this.#activeCount = Math.max(0, this.#activeCount - 1);
         this.#updateDucking();
       };
 
       /**
-       * Immediate kill — stop all sources, decrement activeCount.
+       * Immediate kill — stop all sources, clear pre-buffer, decrement activeCount.
        */
       const stop = () => {
         if (stopped) return;
         stopped = true;
+        preBuffer = [];
+        preBufferingDone = true;
         for (const source of sources) {
           try { source.stop(); } catch {}
           sources.delete(source);
