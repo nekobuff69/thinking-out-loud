@@ -24,7 +24,7 @@ Single-context repo:
 ├── config.js
 ├── docs/adr/
 │   └── 001-deepen-module-architecture.md
-├── ui/          (prompt-selector, mode-toggle, column, history + CSS)
+├── ui/          (prompt-selector, column, history + CSS)
 ├── session/     (orchestrator, channel-pipeline, storage + adapters)
 ├── tts/         (kyutai-backend, tts-engine, text-chunker)
 ├── audio/       (audio-graph, waveform)

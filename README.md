@@ -1,6 +1,6 @@
 # Thinking Out Loud
 
-> A browser-based art installation: ask a philosophical question, watch three local LLMs reason aloud in real time, with synchronized TTS audio and live waveform visualizations.
+> A browser-based art installation: ask a philosophical question, watch three local LLMs reason aloud simultaneously, hear their reasoning spoken sequentially in clean TTS audio with live waveform visualizations.
 
 ## Quick Start
 
@@ -59,9 +59,8 @@ npm run dev       # → http://localhost:5173
 2. App shows "Loading: connecting to TTS server…" — WebSocket handshake
 3. Once connected + LLM health-check passes, all 3 model columns appear
 4. Pick a curated philosophical prompt or type your own
-5. Toggle **Chorus** (all voices simultaneously, spatial stereo) or **Monologue** (sequential)
-6. Click **Ask** — three LLMs stream reasoning concurrently via `Orchestrator`
-7. Within ~2s of the first tokens, all 3 voices begin speaking:
+5. Click **Ask** — three LLMs stream reasoning concurrently via `Orchestrator`
+6. Within ~2s of the first tokens, voice 1 begins speaking. When it finishes, voice 2 starts, then voice 3:
    | Model | Voice | Pan | Color |
    |---|---|---|---|
    | Qwen | `alba-mackenna/casual.wav` | left (-0.7) | `#00ff88` |
@@ -120,7 +119,7 @@ This enables sub-200ms first-audio latency. A legacy single-shot `{"type":"synth
 ```
 ┌──────────────────────────────────────────────────────┐
 │  UI Layer (renders DOM, handles user events)         │
-│  prompt-selector  mode-toggle  column  history       │
+│  prompt-selector  column  history                    │
 │  debug-overlay                                       │
 ├──────────────────────────────────────────────────────┤
 │  Session Layer (coordinates state across models)     │
@@ -167,8 +166,6 @@ The `Orchestrator` drives a session through: `Idle → Loading → Checking → 
 | `config.js` | Static config: models, voices, prompts, TTS params, system prompt |
 | `ui/prompt-selector.js` | Curated cards + free-text input + recent questions + Ask button |
 | `ui/prompt-selector.css` | Prompt selector styles |
-| `ui/mode-toggle.js` | Chorus / Monologue segmented toggle |
-| `ui/mode-toggle.css` | Mode toggle styles |
 | `ui/column.js` | Per-model text stream, auto-scroll with scroll-back, waveform lifecycle |
 | `ui/column.css` | Column styles |
 | `ui/history.js` | Session history panel with replay support |
@@ -196,7 +193,7 @@ The `Orchestrator` drives a session through: `Idle → Loading → Checking → 
 | `server/tts-server.py` | Python+MLX legacy single-shot WebSocket server (replay fallback) |
 | `server/test_server_streaming.py` | Integration tests for the streaming TTS server (6 tests) |
 | `server/test_server.py` | Integration tests for the legacy TTS server (4 tests) |
-| `test/` | Node test runner suites (104 tests, 17 suites) |
+| `test/` | Node test runner suites (108 tests, 17 suites) |
 | `docs/debug-overlay-reference.md` | Full debug overlay specification + event bus reference |
 | `docs/adr/` | Architectural Decision Records (4 ADRs) |
 | `getReasoningContent.js` | CLI helper: streams reasoning from an LLM endpoint |
@@ -219,7 +216,7 @@ npm install
 npm run dev
 
 # Run tests (Node built-in test runner)
-npm test                 # 104 tests, 17 suites
+npm test                 # 108 tests, 17 suites
 
 # Type-check JavaScript with TypeScript (strict, checkJs)
 npm run typecheck

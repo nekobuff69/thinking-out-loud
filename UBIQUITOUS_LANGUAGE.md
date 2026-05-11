@@ -61,13 +61,11 @@
 | **Ducking** | Subtle volume reduction on all channels when multiple voices overlap | Volume attenuation, gain reduction |
 | **AnalyserNode** | The Web Audio API node that extracts real-time frequency/amplitude data for waveform rendering | Audio analyser, FFT node |
 
-## Playback modes
+## Playback
 
 | Term | Definition | Aliases to avoid |
 |---|---|---|
-| **Chorus** | Default mode: all three voices speak simultaneously with spatial panning | Simultaneous, concurrent, ensemble, polyphony |
-| **Monologue** | Optional mode: voices speak sequentially, each waiting for the previous to finish | Sequential, solo, serial, one-at-a-time |
-| **Mode toggle** | The UI switch that selects Chorus or Monologue before a session starts | Mode selector, playback switch |
+| **Sequential playback** | TTS voices speak one at a time: voice 1 finishes, then voice 2, then voice 3. All three LLMs reason simultaneously (text visible), only TTS is sequential. Single TTSGen active at a time ensures clean audio quality. | Serial, one-at-a-time, monologue |
 
 ## Visual domain
 
@@ -94,11 +92,11 @@
 ## Relationships
 
 - A **Session** is started by an **Ask** action with one **Question**
-- A **Session** operates in exactly one mode: **Chorus** or **Monologue**
 - A **Session** queries three **Models**, each served by a **Provider**
 - Each **Model** produces one stream of **Reasoning** and one **Final answer**
 - The **Final answer** is detected at the **Content boundary** and never spoken or displayed
-- **Reasoning** tokens accumulate in the pipeline's **Unsent buffer**, then flush as **Delta text** on word boundaries to the **TTS server** via **WebSocket**
+- All three **Models** reason simultaneously (text displayed in all columns). TTS plays sequentially: voice 1 → voice 2 → voice 3. Only one pipeline feeds TTS at a time.
+- **Reasoning** tokens accumulate in active pipeline's **Unsent buffer**, then flush as **Delta text** on word boundaries to the **TTS server** via **WebSocket**
 - The **TTS server** appends text chunks as **Entries** to the running **TTSGen**, which generates continuous **PCM chunks** using the model's assigned **Voice**
 - Each **Model** has its own **WebSocket** connection and **TTSGen** instance on the server (3 connections total, one per model)
 - Each **Model** has one **Channel** in the **AudioContext**, with its own **Panning** position. The channel uses `openStream()` mode for live playback and `playStream()` mode for replay.
@@ -111,13 +109,13 @@
 
 ## Example dialogue
 
-> **Dev:** "When the user hits **Ask** in **Chorus** mode, do I start all three **Channels** at once?"
+> **Dev:** "When the user hits **Ask**, do I start all three **Channels** at once?"
 >
-> **Domain expert:** "Yes — fire all three LLM fetches simultaneously. Each **Model** starts its **Reasoning** stream independently. The first tokens arrive at the **TTS server** within milliseconds, so all three voices begin speaking almost immediately. That's the point of **Chorus** — asynchronous, overlapping voices."
+> **Domain expert:** "Yes — fire all three LLM fetches simultaneously. Each **Model** starts its **Reasoning** stream independently. The reasoning text appears in all three columns at once. TTS plays sequentially: pipeline 1 speaks while pipelines 2 and 3 accumulate text silently. When pipeline 1 finishes, pipeline 2 resumes and sends its full reasoning to TTS, then pipeline 3. This ensures single TTSGen active at a time → clean, stutter-free audio."
 >
 > **Dev:** "And the **TTS model** — does it queue text per **Channel**, or synthesize in some global order?"
 >
-> **Domain expert:** "Per **Channel**. Each **Channel** has its own **WebSocket** connection to the server with its own **TTSGen** instance. The server steps all gens cooperatively in a round-robin loop. The **AudioContext** mixes the resulting audio. The only shared concern is **Ducking** — when two **Channels** overlap, their gain nodes attenuate slightly."
+> **Domain expert:** "Per **Channel**. Each **Channel** has its own **WebSocket** connection to the server with its own **TTSGen** instance. At any moment, only one TTSGen is active — the others are idle. When a pipeline resumes, it sends its full accumulated text as a single chunk. The server steps the active gen in a tight loop. **Ducking** is still present for any brief overlap when one voice's tail padding overlaps with the next voice's start."
 >
 > **Dev:** "What happens if a **Model** reaches the **Content boundary** while its **TTS** is still generating audio?"
 >

@@ -4,7 +4,7 @@
 
 ## Purpose
 
-"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three local LLMs (Qwen, Gemma, GPT-OSS) stream their internal reasoning tokens simultaneously. Each model's reasoning is synthesized to speech in a distinct voice, spatially panned across stereo channels, with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
+"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three local LLMs (Qwen, Gemma, GPT-OSS) stream their internal reasoning tokens simultaneously. Each model's reasoning is displayed in real time. The reasoning text is synthesized to speech sequentially — voice 1 speaks first, voice 2 starts when voice 1 finishes, then voice 3 — each in a distinct voice spatially panned across stereo channels with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
 
 ## Tech Stack
 
@@ -32,8 +32,8 @@ index.html ──► index.js (bootstraps everything)
 ┌─────────────────────────────────────────────────────────────┐
 │  UI Layer (renders DOM, handles user events)                │
 │  ├── ui/prompt-selector.js    Ask button, curated prompts   │
-│  ├── ui/mode-toggle.js        Chorus / Monologue switch     │
-│  ├── ui/column.js             Per-model text + waveform     │
+
+│  ├── ui/column.js               Per-model text + waveform   │
 │  ├── ui/history.js            Past sessions panel           │
 │  └── ui/debug-overlay.js      Togglable pipeline diagnostics  │
 ├─────────────────────────────────────────────────────────────┤
@@ -88,7 +88,7 @@ index.html ──► index.js (bootstraps everything)
 User clicks Ask
   │
   ▼
-index.js ──► orchestrator.start(question, mode)
+index.js ──► orchestrator.start(question)
   │
   ▼
 Orchestrator:
@@ -98,18 +98,22 @@ Orchestrator:
      • Open per-model WebSocket to TTS server (3 connections total)
      • Create ChannelPipeline (with per-model KyutaiBackend injected)
      • ChannelPipeline.createChannel() → AudioGraph channel (openStream mode) + waveform
+     • Pipelines 2 and 3 are paused — only pipeline 1 feeds TTS initially
   4. Fire all LLM streams concurrently via `LLMProvider.streamReasoning()`
-     • Tokens → ChannelPipeline.feedToken() → Column.appendToken()
-     • Pipeline accumulator builds #unsentBuffer, sends incremental text deltas
-       on word boundaries (first chunk: 50ms timeout for fast first audio)
+     • Tokens → ChannelPipeline.feedToken() → Column.appendToken() all 3 models
+     • Only pipeline 1 feeds TTS: accumulator builds #unsentBuffer, sends incremental
+       text deltas on word boundaries (first chunk: 50ms timeout for fast first audio)
      • Each text chunk → KyutaiBackend.sendText() → WebSocket text message →
        server appends entries to TTSGen → generates PCM frames
      • PCM frames push back over WebSocket → AudioGraph channel.openStream().feed()
        → AudioBufferSourceNodes → waveform animates
+     • When pipeline 1's TTS finishes → orchestrator advances to pipeline 2
+     • Pipeline 2 resumes → sends full accumulated reasoningText to TTS → speaks
+     • Same for pipeline 3
      • Content boundary / LLM end / token cap → send remaining delta + close stream
      • Server drains remaining entries + tail padding → sends done
      • State events → EventBus → DebugOverlay (when enabled)
-  5. When all streams end + all TTS done → save session → Done
+  5. When last pipeline's TTS finishes → save session → Done
 ```
 
 ### Replay (History click)
@@ -140,7 +144,7 @@ new ChannelPipeline({ model, ttsConfig, column, ttsBackend, llmProvider, audioGr
   .drainText(text)                    // Replay stored reasoning (uses legacy synthesiz protocol)
   .feedToken(token)                   // Manual token injection → accumulator → sendText()
   .softStop()                         // Close stream handles + stop audio. Backend stays alive.
-  .pause() / .resume()                // Stop/start sendText() calls (monologue sequencing)
+  .pause() / .resume()                // Stop/start sendText() calls (sequential TTS playback)
   .isActive / .isCapped / .reasoningText  // Getters
 ```
 
@@ -148,7 +152,8 @@ new ChannelPipeline({ model, ttsConfig, column, ttsBackend, llmProvider, audioGr
 or sentence-ending punctuation), or first-chunk 50ms timeout, the buffer contents are sent as
 a `text` WebSocket message via the backend's stream handle. The buffer is then cleared
 (drain-on-send). Token cap stops `sendText()` calls and closes the stream; server continues
-generating from already-queued entries.
+generating from already-queued entries. Paused pipelines accumulate text in `#reasoningText`
+but skip TTS feeding until `resume()` sends the full accumulated text and closes the stream.
 
 **Replay path:** `drainText()` uses the legacy `startStream(fullText, voice, ...)` API and
 `playStream(streamFn)` audio mode — no incremental protocol needed for pre-recorded text.
@@ -307,8 +312,7 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `config.js` | Static config: models, prompts, TTS params | Shallow (data) |
 | `ui/prompt-selector.js` | Curated cards + free-text + Ask button, keyboard a11y | Deep |
 | `ui/prompt-selector.css` | Prompt cards + input styling | Shallow (style) |
-| `ui/mode-toggle.js` | Chorus/Monologue toggle, keyboard a11y | Deep |
-| `ui/mode-toggle.css` | Toggle button styling | Shallow (style) |
+
 | `ui/column.js` | Per-model text stream + waveform lifecycle | Deep |
 | `ui/column.css` | Column layout + scrollbar styling | Shallow (style) |
 | `ui/history.js` | Session history panel | Deep |
