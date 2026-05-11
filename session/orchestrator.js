@@ -48,8 +48,6 @@ export class Orchestrator {
   #state = "Idle";
   /** @type {Map<string, ChannelPipeline>} */
   #activeSessions = new Map();
-  /** @type {string} */
-  #mode = "chorus";
   /** @type {number} */
   #monologueIndex = 0;
   /** @type {boolean} */
@@ -110,12 +108,10 @@ export class Orchestrator {
 
   /**
    * @param {string} question
-   * @param {string} [mode]
    * @returns {Promise<void>}
    */
-  async start(question, mode) {
+  async start(question) {
     if (this.#state !== "Idle") return;
-    this.#mode = mode || "chorus";
     this.#questionText = question;
     this.#monologueIndex = 0;
     this.#allStreamsDone = false;
@@ -138,7 +134,7 @@ export class Orchestrator {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       question,
-      mode: this.#mode,
+      mode: "monologue",
       models: [],
     };
 
@@ -202,7 +198,6 @@ export class Orchestrator {
    */
   async replay(sessionData) {
     if (this.#state !== "Idle") return;
-    this.#mode = sessionData.mode || "chorus";
     this.#questionText = sessionData.question;
     this.#monologueIndex = 0;
     this.#allStreamsDone = false;
@@ -290,9 +285,7 @@ export class Orchestrator {
         audioGraph: this.#audioGraph,
         eventBus: this.#eventBus,
         onIdle: () => {
-          if (this.#mode === "monologue") {
-            this.#advanceMonologue();
-          }
+          this.#advanceMonologue();
           this.#checkAllDone();
         },
       });
@@ -310,8 +303,8 @@ export class Orchestrator {
         pipeline.setTextChunker(chunker);
       }
 
-      // In Monologue mode, pause all queues except the first
-      if (this.#mode === "monologue" && index > 0) {
+      // Pause all pipelines except the first (sequential playback)
+      if (index > 0) {
         pipeline.pause();
       }
 
@@ -334,7 +327,6 @@ export class Orchestrator {
   }
 
   #advanceMonologue() {
-    if (this.#mode !== "monologue") return;
     const sessionKeys = [...this.#activeSessions.keys()];
     this.#monologueIndex++;
     if (this.#monologueIndex < sessionKeys.length) {
@@ -348,25 +340,12 @@ export class Orchestrator {
   #checkAllDone() {
     if (this.#state === "Done") return;
 
-    // In Monologue mode, only consider done when the last model's pipeline finishes
-    if (this.#mode === "monologue") {
-      const sessionKeys = [...this.#activeSessions.keys()];
-      const lastModel = sessionKeys[sessionKeys.length - 1];
-      const lastPipeline = this.#activeSessions.get(lastModel);
-      if (this.#allStreamsDone && lastPipeline && !lastPipeline.isActive) {
-        this.#finishSession();
-      }
-      return;
-    }
-
-    // Chorus mode: done when all streams done and all pipelines idle
-    const allDone = this.#allStreamsDone &&
-      [...this.#activeSessions.values()].every((p) => !p.isActive);
-
-    if (allDone) {
-      if (this.#state === "Thinking" || this.#state === "Speaking") {
-        this.#finishSession();
-      }
+    // Only consider done when the last model's pipeline finishes
+    const sessionKeys = [...this.#activeSessions.keys()];
+    const lastModel = sessionKeys[sessionKeys.length - 1];
+    const lastPipeline = this.#activeSessions.get(lastModel);
+    if (this.#allStreamsDone && lastPipeline && !lastPipeline.isActive) {
+      this.#finishSession();
     }
   }
 

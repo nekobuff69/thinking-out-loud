@@ -5,7 +5,6 @@
 
 import { config } from "./config.js";
 import { createPromptSelector } from "./ui/prompt-selector.js";
-import { createModeToggle } from "./ui/mode-toggle.js";
 import { createHistory } from "./ui/history.js";
 import { createColumn } from "./ui/column.js";
 import { KyutaiBackend } from "./tts/kyutai-backend.js";
@@ -44,9 +43,6 @@ topBar.appendChild(historyBtn);
 // Prompt selector (with recent questions)
 const recentQuestions = store.getQuestions();
 const promptSelector = createPromptSelector(topBar, config.curatedPrompts, recentQuestions);
-
-// Mode toggle
-const modeToggle = createModeToggle(topBar, config.defaultMode);
 
 // Stop button
 const stopBtn = document.createElement("button");
@@ -114,14 +110,12 @@ orchestrator.onStateChange((state) => {
 
   if (state === "Loading" || state.startsWith("Loading:") || state === "Checking" || state === "Thinking" || state === "Speaking") {
     promptSelector.setEnabled(false);
-    modeToggle.setEnabled(false);
     historyBtn.disabled = true;
     stopBtn.style.display = (state === "Thinking" || state === "Speaking") ? "inline-block" : "none";
   }
 
   if (state === "Done" || state.startsWith("Error")) {
     promptSelector.setEnabled(true);
-    modeToggle.setEnabled(true);
     historyBtn.disabled = false;
     stopBtn.style.display = "none";
     if (state.startsWith("Error")) {
@@ -145,7 +139,7 @@ if (window.location.search.includes("debug")) {
 
 promptSelector.onAsk(async (question) => {
   try {
-    await orchestrator.start(question, modeToggle.getMode());
+    await orchestrator.start(question);
   } catch (err) {
     console.error("Session start failed:", err);
     // orchestrator.onStateChange handles Error state via stop() path

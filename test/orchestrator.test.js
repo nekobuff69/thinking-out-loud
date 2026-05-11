@@ -68,7 +68,7 @@ describe("Orchestrator", () => {
     // Verifying a new session can start: start() should not bail out early
     // We check that it doesn't return immediately (which it would do if state !== "Idle")
     // by confirming the method begins executing and reaches Loading state
-    const startPromise = orchestrator.start("test question", "chorus");
+    const startPromise = orchestrator.start("test question");
     // start() is async and will set state to "Loading" immediately,
     // then quickly transitions to "Loading: downloading TTS model…"
     assert.ok(
@@ -148,7 +148,7 @@ describe("Orchestrator", () => {
     });
 
     // Start a session (stream runs indefinitely)
-    orchestrator.start("test", "chorus");
+    orchestrator.start("test");
     await new Promise((r) => setTimeout(r, 30));
 
     // User clicks Stop mid-stream

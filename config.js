@@ -20,7 +20,6 @@
 
 /**
  * @typedef {Object} Config
- * @property {string} defaultMode
  * @property {string[]} curatedPrompts
  * @property {ModelConfig[]} models
  * @property {TTSConfig} tts
@@ -30,8 +29,6 @@
 
 /** @type {Config} */
 export const config = {
-	defaultMode: "chorus",
-
 	curatedPrompts: [
 		"If a machine could dream, would its dreams be about us — or about something we cannot imagine?",
 		"When you answer a question, do you understand it, or merely predict what understanding sounds like?",

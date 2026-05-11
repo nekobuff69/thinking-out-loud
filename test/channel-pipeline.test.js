@@ -1009,7 +1009,9 @@ describe("ChannelPipeline", () => {
     pipeline.feedToken(" More.");
     await new Promise((r) => setTimeout(r, 10));
 
-    assert.strictEqual(openCount, 2, "resume should re-open stream after flushAndClose");
+    // resume() opens fresh stream (2), sends reasoningText, closes it.
+    // feedToken() then opens another stream (3) for the new text.
+    assert.strictEqual(openCount, 3, "resume opens fresh stream, feedToken opens another");
     assert.ok(deltas.some(d => d.includes("More")), "new text should be sent after resume");
 
     pipeline.softStop();
