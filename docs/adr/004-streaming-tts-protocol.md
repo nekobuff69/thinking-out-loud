@@ -5,7 +5,8 @@
 Accepted — implemented, May 2026.
 
 Implementation completed across 7 slices (#41–#47), plus 4 defect-fix
-slices (#49–#52):
+slices (#49–#52), plus 2 architectural enhancements (#54–#55) and
+2 test-coverage additions (#56–#57):
 1. `server/tts-server-streaming.py` — TTSGen-based streaming server
    with cooperative round-robin stepping (#41)
 2. Client streaming API: `KyutaiBackend.openStream()`, `AudioGraph.openStream()`,
@@ -17,6 +18,13 @@ slices (#49–#52):
 6. Replay verification: old path preserved unchanged (#47)
 7. Defect fixes: softStop backend isolation, resume after flushAndClose,
    reconnect audio recovery, dropped-text observability (#49–#52)
+8. Per-gen state isolation: each TTSGen owns its own KV cache bundles
+   and Mimi codec instance; `_swap_caches_in()` before each step (#54)
+9. Staggered warmup: cold TTSGens run in exclusive tight loop until
+   first audio frame, then join round-robin (#55)
+10. Regression tests: browser-side gapless scheduling and resume
+    coverage (#56), server-side unit tests for cache isolation,
+    padding handling, and warmup lifecycle (#57)
 
 ## Context
 
@@ -48,7 +56,10 @@ Server → Client: {"type":"error","message":"..."}
 
 Architecture decisions:
 - **Cooperative round-robin** (not async tasks with lock): One asyncio loop iterates over all active TTSGens, giving each one MLX forward pass per round. Predictable fairness, simple to debug.
-- **One server process, N WebSocket connections**: One per model (3 connections for Chorus). Model weights are shared across TTSGen instances; only KV caches are per-instance.
+- **Staggered warmup**: New TTSGens require ~30 acoustic-delay steps before producing any audio. Cold gens run in an exclusive tight loop until they emit their first audio frame, then graduate to the shared round-robin cycle. This eliminates the 7+ second initial silence previously caused by interleaving warmup steps across all gens.
+- **Per-gen state isolation**: Each TTSGen owns its own `transformer_cache` bundle, `depformer_cache` bundle, and `Mimi` codec instance — all independent of other gens. Before each `step()`, the gen swaps its cache bundles into the shared `tts_model.lm` via pointer reassignment (`_swap_caches_in()`). After the step, caches are updated in-place on the gen's own objects. Model weight matrices remain shared and read-only across all gens. This fixes multi-voice audio garbling caused by concurrent cache corruption.
+- **Padding frame handling**: When no text entries have arrived yet, padding frames are injected to keep the model alive. These frames are always decoded through the per-gen `Mimi` instance (keeping codec state in sync), but the resulting PCM is discarded instead of sent to the client. Previously, skipping Mimi decode for padding frames caused codec state desynchronization and crackling audio.
+- **One server process, N WebSocket connections**: One per model (3 connections for Chorus). Model weights are shared across TTSGen instances; KV caches and Mimi codec instances are per-instance.
 - **Push PCM delivery**: Each `_step()` sends its audio frame immediately over WebSocket. No polling. TCP backpressure + browser AudioContext scheduling handle flow control naturally.
 - **`stop` message**: Immediate kill — abort generation, discard pending entries, close cleanly. Required for the Stop button's "fresh slate" behavior.
 
@@ -109,6 +120,9 @@ Pipelines 1 and 2 are paused by the orchestrator — they accumulate text but ne
 - **Cleaner client code:** Removes the debounce timer, full-text flush, and audio handle restart logic from ChannelPipeline.
 - **Unaffected replay:** Old protocol and code path preserved untouched.
 - **Better debuggability:** Per-model WebSocket connections mean per-model connection state, independent reconnection, and labeled server logs.
+- **Clean concurrent multi-voice audio:** Per-gen state isolation (each TTSGen owns its own KV cache bundles and Mimi codec instance) eliminates garbled audio from concurrent cache corruption. Three voices in Chorus mode produce clean, intelligible audio simultaneously.
+- **Faster first-audio startup:** Staggered warmup runs new TTSGens exclusively until their first audio frame, cutting initial silence from ~7s to ~2.5s per voice in Chorus mode.
+- **Crackle-free padding:** Padding frames (injected when text hasn't arrived yet) always decode through the per-gen Mimi instance, keeping codec state synchronized — eliminating the cracking/popping artifact that occurred when codec state was skipped.
 
 ### Negative / Trade-offs
 
@@ -122,6 +136,7 @@ Pipelines 1 and 2 are paused by the orchestrator — they accumulate text but ne
 - Streaming MLX implementation: <https://github.com/kyutai-labs/delayed-streams-modeling/blob/main/scripts/tts_mlx_streaming.py>
 - DSM research paper: <https://arxiv.org/html/2509.08753v2>
 - PRD: <https://github.com/nekobuff69/thinking-out-loud/issues/40>
+- Bug: <https://github.com/nekobuff69/thinking-out-loud/issues/53> — Garbled multi-voice audio (fixed by per-gen state isolation)
 
 ## Related
 

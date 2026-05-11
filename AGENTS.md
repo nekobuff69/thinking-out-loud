@@ -5,9 +5,11 @@
 Before claiming work is done, run:
 
 ```bash
-npm test          # Node built-in test runner (15 tests, 5 suites)
-npm run typecheck # TypeScript strict check-js (tsc --noEmit)
-npm run build     # Vite production build
+npm test              # Node built-in test runner (104 tests, 17 suites)
+npm run typecheck     # TypeScript strict check-js (tsc --noEmit)
+npm run build         # Vite production build
+python3 -c "import py_compile; py_compile.compile('server/tts-server-streaming.py', doraise=True)"  # Python server syntax check
+python3 -c "import py_compile; py_compile.compile('server/test_server_streaming.py', doraise=True)"  # Python test syntax check
 ```
 
 ### Issue tracker

@@ -11,7 +11,7 @@
 - **Runtime:** Browser (ES modules)
 - **Build:** Vite dev server + production bundler
 - **LLM Inference:** OpenAI-compatible local providers (LM Studio, etc.) via `fetch()` + SSE
-- **TTS:** Kyutai DSM TTS via local Python+MLX server (`moshi-mlx`), streamed over WebSocket. Mimi codec, 1.6B params, Apple Silicon optimized. Uses incremental text feeding via `TTSGen` for smooth, low-latency speech. Per-model WebSocket connections (3 total).
+- **TTS:** Kyutai DSM TTS via local Python+MLX server (`moshi-mlx`), streamed over WebSocket. Mimi codec, 1.6B params, Apple Silicon optimized. Uses incremental text feeding via `TTSGen` for smooth, low-latency speech. Per-model WebSocket connections (3 total). Server features per-gen state isolation (each TTSGen owns its own KV cache bundles and Mimi codec instance for clean concurrent multi-voice audio) and staggered warmup (cold gens run exclusively until first audio frame).
 - **TTS Protocol:** Streaming protocol (`open_stream` → `text`(×N) → `close_stream`) for live sessions; legacy single-shot `synthesize` protocol preserved for replay.
 - **TTS Reference:** See `docs/adr/004-streaming-tts-protocol.md` for protocol design. Upstream references: [Kyutai TTS blog](https://kyutai.org/blog/2025-07-03-kyutai-tts-1-6b#delayed-streams-modeling), [streaming MLX example](https://github.com/kyutai-labs/delayed-streams-modeling/blob/main/scripts/tts_mlx_streaming.py), [DSM paper](https://arxiv.org/html/2509.08753v2).
 - **Audio:** Web Audio API (AudioContext, GainNode, StereoPannerNode, AnalyserNode)
@@ -50,7 +50,15 @@ index.html ──► index.js (bootstraps everything)
 │  ├── tts/tts-engine.js        Streaming interface           │
 │  ├── tts/text-chunker.js      Word-boundary accumulator     │
 │  ├── server/tts-server.py     Legacy single-shot server     │
-│  └── server/tts-server-streaming.py  Streaming TTSGen server│
+│  ├── server/tts-server-streaming.py  Streaming TTSGen server│
+│  │   ├── Per-gen state isolation (#54)                      │
+│  │   │   └── Each TTSGen owns its own KV cache bundles      │
+│  │   │       and Mimi instance; _swap_caches_in() before    │
+│  │   │       each step, padding frames keep codec sync via  │
+│  │   │       per-gen Mimi but discard PCM                   │
+│  │   └── Staggered warmup (#55)                             │
+│  │       └── Cold gens run exclusive until first audio      │
+│  │           frame, then join round-robin cycle             │
 ├─────────────────────────────────────────────────────────────┤
 │  Audio Layer (Web Audio routing + visualization)            │
 │  ├── audio/audio-graph.js     AudioContext + channels       │
@@ -316,7 +324,7 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `tts/kyutai-backend.js` | Per-model WebSocket client (live streaming + legacy replay API, auto-reconnect, debug events) | Deep |
 | `tts/tts-engine.js` | Abstract TTS streaming interface | Shallow (interface) |
 | `tts/text-chunker.js` | Word-boundary accumulator (drain-on-send, first-chunk timeout) | Shallow |
-| `server/tts-server-streaming.py` | Python+MLX streaming server (TTSGen, cooperative round-robin, new protocol) | Deep |
+| `server/tts-server-streaming.py` | Python+MLX streaming server (TTSGen, per-gen state isolation, staggered warmup, cooperative round-robin, new protocol) | Deep |
 | `server/tts-server.py` | Legacy single-shot Python+MLX server (preserved for replay fallback) | Deep |
 | `server/test_server_streaming.py` | Python integration tests for streaming server (7 tests) | Shallow (test) |
 | `server/requirements.txt` | Python server dependencies (moshi-mlx, websockets) | Shallow (config) |
