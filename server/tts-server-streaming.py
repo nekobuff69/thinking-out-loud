@@ -135,6 +135,15 @@ class TTSGen:
         gcb = tts_model.lm.cfg.audio_codebooks
         self.mimi = Mimi(mimi_202407(gcb))
         self.mimi.update(tts_model.mimi.parameters())
+        # update() copies raw weights but does NOT trigger update_in_place()
+        # on EuclideanCodebook and ConvTranspose1d sub-modules. Their cached
+        # derived state (_embedding, _c2, _expanded_weight) must be recomputed
+        # from the copied weights, or the codec outputs silence.
+        def _recompute_cached(module, name, _):
+            if hasattr(module, 'update_in_place'):
+                module.update_in_place()
+            return True
+        self.mimi.filter_and_map(_recompute_cached)
 
         log("STREAM", f"{model_label} TTSGen ready for voice '{voice}'")
 
