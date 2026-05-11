@@ -6,3 +6,6 @@ sub-agent-prompts/
 legacy-test-run-data/
 .scratch/
 dev-note-dont-read.md
+
+
+/dist
