@@ -2,6 +2,7 @@ import { healthCheck } from "../llm/health-check.js";
 import { OpenAICompatibleProvider } from "../llm/providers/openai-compatible-provider.js";
 import { ChannelPipeline } from "./channel-pipeline.js";
 import { SimpleEventBus } from "./event-bus.js";
+import { TextChunker } from "../tts/text-chunker.js";
 
 /**
  * @typedef {import("../config.js").ModelConfig} ModelConfig
@@ -19,7 +20,7 @@ import { SimpleEventBus } from "./event-bus.js";
  * @property {TTSConfig} ttsConfig
  * @property {AudioGraph} audioGraph
  * @property {Map<string, ColumnAPI>} columns
- * @property {import("../tts/tts-engine.js").TTSEngine} ttsEngine
+ * @property {Map<string, import("../tts/tts-engine.js").TTSEngine>} ttsEngines
  * @property {SessionStore} storage
  */
 
@@ -39,16 +40,14 @@ export class Orchestrator {
   #audioGraph;
   /** @type {Map<string, ColumnAPI>} */
   #columns;
-  /** @type {import("../tts/tts-engine.js").TTSEngine} */
-  #ttsEngine;
+  /** @type {Map<string, import("../tts/tts-engine.js").TTSEngine>} */
+  #ttsEngines;
   /** @type {((state: string) => void) | null} */
   #onStateChange = null;
   /** @type {string} */
   #state = "Idle";
   /** @type {Map<string, ChannelPipeline>} */
   #activeSessions = new Map();
-  /** @type {string} */
-  #mode = "chorus";
   /** @type {number} */
   #monologueIndex = 0;
   /** @type {boolean} */
@@ -69,13 +68,13 @@ export class Orchestrator {
   /**
    * @param {OrchestratorDeps} deps
    */
-  constructor({ models, systemPrompt, ttsConfig, audioGraph, columns, ttsEngine, storage }) {
+  constructor({ models, systemPrompt, ttsConfig, audioGraph, columns, ttsEngines, storage }) {
     this.#models = models;
     this.#systemPrompt = systemPrompt;
     this.#ttsConfig = ttsConfig;
     this.#audioGraph = audioGraph;
     this.#columns = columns;
-    this.#ttsEngine = ttsEngine;
+    this.#ttsEngines = ttsEngines;
     this.#storage = storage;
   }
 
@@ -109,20 +108,25 @@ export class Orchestrator {
 
   /**
    * @param {string} question
-   * @param {string} [mode]
    * @returns {Promise<void>}
    */
-  async start(question, mode) {
+  async start(question) {
     if (this.#state !== "Idle") return;
-    this.#mode = mode || "chorus";
     this.#questionText = question;
     this.#monologueIndex = 0;
     this.#allStreamsDone = false;
     this.#audioGraph.clearChannels();
     this.#setState("Loading");
 
-    this.#setState("Loading: downloading TTS model…");
-    await this.#ttsEngine.load();
+    this.#setState("Loading: connecting to TTS server…");
+    try {
+      await Promise.all(
+        [...this.#ttsEngines.values()].map((e) => e.load())
+      );
+    } catch (err) {
+      this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.wsUrl || "ws://localhost:8765"}`);
+      return;
+    }
     this.#activeSessions.clear();
     this.#eventBus = new SimpleEventBus();
     this.#onEventBusReady?.(this.#eventBus);
@@ -130,7 +134,7 @@ export class Orchestrator {
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       question,
-      mode: this.#mode,
+      mode: "monologue",
       models: [],
     };
 
@@ -194,15 +198,21 @@ export class Orchestrator {
    */
   async replay(sessionData) {
     if (this.#state !== "Idle") return;
-    this.#mode = sessionData.mode || "chorus";
     this.#questionText = sessionData.question;
     this.#monologueIndex = 0;
     this.#allStreamsDone = false;
     this.#audioGraph.clearChannels();
     this.#setState("Loading");
 
-    this.#setState("Loading: downloading TTS model…");
-    await this.#ttsEngine.load();
+    this.#setState("Loading: connecting to TTS server…");
+    try {
+      await Promise.all(
+        [...this.#ttsEngines.values()].map((e) => e.load())
+      );
+    } catch (err) {
+      this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.wsUrl || "ws://localhost:8765"}`);
+      return;
+    }
     this.#activeSessions.clear();
     this.#eventBus = new SimpleEventBus();
     this.#onEventBusReady?.(this.#eventBus);
@@ -263,26 +273,38 @@ export class Orchestrator {
         this.#providerCache.set(cacheKey, llmProvider);
       }
 
+      const ttsEngine = this.#ttsEngines.get(model.name);
+      if (!ttsEngine) continue;
+
       const pipeline = new ChannelPipeline({
         model: /** @type {ModelConfig} */ (model),
         ttsConfig: this.#ttsConfig,
         column,
-        ttsEngine: this.#ttsEngine,
+        ttsEngine,
         llmProvider,
         audioGraph: this.#audioGraph,
         eventBus: this.#eventBus,
         onIdle: () => {
-          if (this.#mode === "monologue") {
-            this.#advanceMonologue();
-          }
+          this.#advanceMonologue();
           this.#checkAllDone();
         },
       });
 
       pipeline.createChannel();
 
-      // In Monologue mode, pause all queues except the first
-      if (this.#mode === "monologue" && index > 0) {
+      // Wire TextChunker if enabled in config
+      if (this.#ttsConfig.useTextChunker) {
+        const chunker = new TextChunker({
+          maxWords: 8,
+          timeoutMs: 150,
+          flushOnPunctuation: true,
+          onFlush: () => pipeline.flushTts(),
+        });
+        pipeline.setTextChunker(chunker);
+      }
+
+      // Pause all pipelines except the first (sequential playback)
+      if (index > 0) {
         pipeline.pause();
       }
 
@@ -305,7 +327,6 @@ export class Orchestrator {
   }
 
   #advanceMonologue() {
-    if (this.#mode !== "monologue") return;
     const sessionKeys = [...this.#activeSessions.keys()];
     this.#monologueIndex++;
     if (this.#monologueIndex < sessionKeys.length) {
@@ -319,25 +340,12 @@ export class Orchestrator {
   #checkAllDone() {
     if (this.#state === "Done") return;
 
-    // In Monologue mode, only consider done when the last model's pipeline finishes
-    if (this.#mode === "monologue") {
-      const sessionKeys = [...this.#activeSessions.keys()];
-      const lastModel = sessionKeys[sessionKeys.length - 1];
-      const lastPipeline = this.#activeSessions.get(lastModel);
-      if (this.#allStreamsDone && lastPipeline && !lastPipeline.isActive) {
-        this.#finishSession();
-      }
-      return;
-    }
-
-    // Chorus mode: done when all streams done and all pipelines idle
-    const allDone = this.#allStreamsDone &&
-      [...this.#activeSessions.values()].every((p) => !p.isActive);
-
-    if (allDone) {
-      if (this.#state === "Thinking" || this.#state === "Speaking") {
-        this.#finishSession();
-      }
+    // Only consider done when the last model's pipeline finishes
+    const sessionKeys = [...this.#activeSessions.keys()];
+    const lastModel = sessionKeys[sessionKeys.length - 1];
+    const lastPipeline = this.#activeSessions.get(lastModel);
+    if (this.#allStreamsDone && lastPipeline && !lastPipeline.isActive) {
+      this.#finishSession();
     }
   }
 

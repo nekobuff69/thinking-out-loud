@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted — implemented May 2026.
+Superseded by ADR-003 (Kyutai DSM TTS via Local MLX Server) — May 2026.
+
+Kokoro, `kokoro-js`, `SentenceBuffer`, and `TTSPlaybackQueue` have been removed from the codebase. See ADR-003 for the replacement architecture.
 
 ## Context
 

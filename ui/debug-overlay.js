@@ -15,16 +15,9 @@ const PROGRESS_LABELS = Object.freeze({
 });
 
 /**
- * Human-readable labels for TTS playback queue states.
+ * Per-model TTS latency tracking for debug overlay display.
  */
-const QUEUE_LABELS = Object.freeze({
-  Idle: "Idle",
-  Synthesizing: "🎙️ Generating voice",
-  Playing: "🔊 Speaking",
-  Gapping: "⏸ Pausing",
-  Paused: "⏸ Paused",
-  Stopped: "⏹ Stopped",
-});
+const ttsLatency = new Map();
 
 /**
  * Togglable debug overlay that observes pipeline state via the event bus.
@@ -123,9 +116,12 @@ export class DebugOverlay {
     this.#eventBus = bus;
     this.#unsubs.push(
       bus.on("token", (data) => this.#onToken(data)),
-      bus.on("buffer-state", (data) => this.#onBufferState(data)),
-      bus.on("queue-state", (data) => this.#onQueueState(data)),
-      bus.on("synth-timing", (data) => this.#onSynthTiming(data)),
+      bus.on("tts-connect", (data) => this.#onTtsConnect(data)),
+      bus.on("tts-disconnect", (data) => this.#onTtsDisconnect(data)),
+      bus.on("tts-first-chunk", (data) => this.#onTtsFirstChunk(data)),
+      bus.on("tts-chunk", (data) => this.#onTtsChunk(data)),
+      bus.on("tts-done", (data) => this.#onTtsDone(data)),
+      bus.on("tts-text-sent", (data) => this.#onTtsTextSent(data)),
       bus.on("pipeline-progress", (data) => this.#onProgress(data)),
       bus.on("pipeline-error", (data) => this.#onError(data))
     );
@@ -141,6 +137,53 @@ export class DebugOverlay {
   }
 
   /**
+   * @param {{ modelName: string }} data
+   */
+  #onTtsConnect(data) {
+    const card = this.#ensureCard(data.modelName);
+    const el = /** @type {HTMLElement | null} */ (card.querySelector(".debug-row-value--status"));
+    if (el) {
+      el.textContent = "connected";
+      el.style.color = "#4caf50";
+    }
+  }
+
+  /**
+   * @param {{ modelName: string }} data
+   */
+  #onTtsDisconnect(data) {
+    const card = this.#ensureCard(data.modelName);
+    const el = /** @type {HTMLElement | null} */ (card.querySelector(".debug-row-value--status"));
+    if (el) {
+      el.textContent = "disconnected";
+      el.style.color = "#ff5722";
+    }
+  }
+
+  /**
+   * @param {{ modelName: string }} data
+   */
+  #onTtsDone(data) {
+    const card = this.#ensureCard(data.modelName);
+    const el = /** @type {HTMLElement | null} */ (card.querySelector(".debug-row-value--status"));
+    if (el) {
+      el.textContent = "done";
+      el.style.color = "#8bc34a";
+    }
+  }
+
+  /**
+   * @param {{ modelName: string, chars: number, words: number }} data
+   */
+  #onTtsTextSent(data) {
+    const card = this.#ensureCard(data.modelName);
+    const el = card.querySelector(".debug-row-value--text");
+    if (el) {
+      el.textContent = `${data.chars} chars`;
+    }
+  }
+
+  /**
    * @param {{ modelName: string, token: string }} data
    */
   #onToken(data) {
@@ -149,47 +192,27 @@ export class DebugOverlay {
   }
 
   /**
-   * @param {{ modelName: string, tokenCount: number, wordCount: number, sentencesHeld: number, capped: boolean }} data
+   * @param {{ modelName: string, latencyMs: number }} data
    */
-  #onBufferState(data) {
+  #onTtsFirstChunk(data) {
+    ttsLatency.set(data.modelName, data.latencyMs);
     const card = this.#ensureCard(data.modelName);
-    const el = card.querySelector(".debug-row-value--buffer");
+    const el = card.querySelector(".debug-row-value--latency");
     if (el) {
-      if (data.wordCount === 0 && data.tokenCount === 0) {
-        el.textContent = "—";
-      } else {
-        let text = `${data.wordCount} words`;
-        if (data.capped) text += " · ⚠️ Max";
-        el.textContent = text;
-      }
+      el.textContent = `${data.latencyMs}ms`;
     }
   }
 
   /**
-   * @param {{ modelName: string, depth: number, state: keyof typeof QUEUE_LABELS }} data
+   * @param {{ modelName: string, bytesReceived: number }} data
    */
-  #onQueueState(data) {
+  #onTtsChunk(data) {
     const card = this.#ensureCard(data.modelName);
-    const el = card.querySelector(".debug-row-value--queue");
+    const el = card.querySelector(".debug-row-value--chunks");
     if (el) {
-      const label = QUEUE_LABELS[data.state] ?? String(data.state);
-      if (data.depth > 0) {
-        el.textContent = `${label} · ${data.depth} waiting`;
-      } else {
-        el.textContent = label;
-      }
-    }
-  }
-
-  /**
-   * @param {{ modelName: string, timingMs: number }} data
-   */
-  #onSynthTiming(data) {
-    const card = this.#ensureCard(data.modelName);
-    const el = card.querySelector(".debug-row-value--synth");
-    if (el) {
-      const seconds = (data.timingMs / 1000).toFixed(2);
-      el.textContent = `${seconds}s`;
+      // Count chunks
+      const current = parseInt(el.textContent || "0", 10) || 0;
+      el.textContent = `${current + 1} chunks · ${((data.bytesReceived / 1024)).toFixed(1)}kB`;
     }
   }
 
@@ -252,10 +275,11 @@ export class DebugOverlay {
     card.className = "debug-model-card";
     card.innerHTML = `
       <div class="debug-model-name">${modelName}</div>
+      <div class="debug-row"><span class="debug-row-label">Status</span><span class="debug-row-value debug-row-value--status">—</span></div>
       <div class="debug-row"><span class="debug-row-label">Progress</span><span class="debug-row-value debug-row-value--progress">—</span></div>
-      <div class="debug-row"><span class="debug-row-label">Buffer</span><span class="debug-row-value debug-row-value--buffer">—</span></div>
-      <div class="debug-row"><span class="debug-row-label">Queue</span><span class="debug-row-value debug-row-value--queue">—</span></div>
-      <div class="debug-row"><span class="debug-row-label">Synth</span><span class="debug-row-value debug-row-value--synth">—</span></div>
+      <div class="debug-row"><span class="debug-row-label">TTS Latency</span><span class="debug-row-value debug-row-value--latency">—</span></div>
+      <div class="debug-row"><span class="debug-row-label">Audio</span><span class="debug-row-value debug-row-value--chunks">—</span></div>
+      <div class="debug-row"><span class="debug-row-label">Text sent</span><span class="debug-row-value debug-row-value--text">—</span></div>
       <div class="debug-errors"></div>
     `;
     container?.appendChild(card);

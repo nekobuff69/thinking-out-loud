@@ -5,10 +5,9 @@
 
 import { config } from "./config.js";
 import { createPromptSelector } from "./ui/prompt-selector.js";
-import { createModeToggle } from "./ui/mode-toggle.js";
 import { createHistory } from "./ui/history.js";
 import { createColumn } from "./ui/column.js";
-import { KokoroBackend } from "./tts/kokoro-backend.js";
+import { KyutaiBackend } from "./tts/kyutai-backend.js";
 import { AudioGraph } from "./audio/audio-graph.js";
 
 import { Orchestrator } from "./session/orchestrator.js";
@@ -45,9 +44,6 @@ topBar.appendChild(historyBtn);
 const recentQuestions = store.getQuestions();
 const promptSelector = createPromptSelector(topBar, config.curatedPrompts, recentQuestions);
 
-// Mode toggle
-const modeToggle = createModeToggle(topBar, config.defaultMode);
-
 // Stop button
 const stopBtn = document.createElement("button");
 stopBtn.className = "ask-btn";
@@ -76,7 +72,15 @@ historyBtn.addEventListener("click", () => {
 // --- Audio + TTS ---
 const audioGraph = new AudioGraph();
 audioGraph.enableTabResume();
-const ttsEngine = new KokoroBackend(config.tts.model, audioGraph);
+
+// Per-model KyutaiBackend instances (3 WebSocket connections)
+const ttsEngines = new Map();
+for (const model of config.models) {
+  ttsEngines.set(
+    model.name,
+    new KyutaiBackend({ wsUrl: config.tts.wsUrl, modelName: model.name })
+  );
+}
 
 // --- Orchestrator ---
 const orchestrator = new Orchestrator({
@@ -85,7 +89,7 @@ const orchestrator = new Orchestrator({
   ttsConfig: config.tts,
   audioGraph,
   columns,
-  ttsEngine,
+  ttsEngines,
   storage: store,
 });
 
@@ -106,14 +110,12 @@ orchestrator.onStateChange((state) => {
 
   if (state === "Loading" || state.startsWith("Loading:") || state === "Checking" || state === "Thinking" || state === "Speaking") {
     promptSelector.setEnabled(false);
-    modeToggle.setEnabled(false);
     historyBtn.disabled = true;
     stopBtn.style.display = (state === "Thinking" || state === "Speaking") ? "inline-block" : "none";
   }
 
   if (state === "Done" || state.startsWith("Error")) {
     promptSelector.setEnabled(true);
-    modeToggle.setEnabled(true);
     historyBtn.disabled = false;
     stopBtn.style.display = "none";
     if (state.startsWith("Error")) {
@@ -137,7 +139,7 @@ if (window.location.search.includes("debug")) {
 
 promptSelector.onAsk(async (question) => {
   try {
-    await orchestrator.start(question, modeToggle.getMode());
+    await orchestrator.start(question);
   } catch (err) {
     console.error("Session start failed:", err);
     // orchestrator.onStateChange handles Error state via stop() path

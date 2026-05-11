@@ -1,17 +1,211 @@
 # Thinking Out Loud
 
-Ask questions and hear multiple LLMs reason out loud, with TTS voice synthesis.
+> A browser-based art installation: ask a philosophical question, watch three local LLMs reason aloud simultaneously, hear their reasoning spoken sequentially in clean TTS audio with live waveform visualizations.
+
+## Quick Start
+
+### 1. LLM Provider — LM Studio (port 1234)
+
+Load a reasoning-capable model in [LM Studio](https://lmstudio.ai/) and start the local server on port 1234. LM Studio enables CORS by default in recent versions. If requests are blocked, enable "Serve on Local Network" in Settings.
+
+```
+LM Studio → Load model → Start Server (port 1234)
+```
+
+The app health-checks `/models` on startup — unreachable models are grayed out.
+
+### 2. TTS Server — Python+MLX (port 8765)
+
+```bash
+cd server
+pip install -r requirements.txt
+```
+
+> **Note:** `moshi-mlx` depends on `sentencepiece==0.2`, which may need a Rust toolchain for source builds on macOS. If the pip build fails:
+> ```bash
+> curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # install Rust
+> pip install -r requirements.txt                                     # retry
+> ```
+
+Start the streaming server:
+
+```bash
+# Full precision (best quality, needs Apple Silicon)
+python server/tts-server-streaming.py
+
+# 8-bit quantized for slower Macs (M1 Air, etc.)
+python server/tts-server-streaming.py --quantize 8
+
+# Custom port
+python server/tts-server-streaming.py --port 9000
+```
+
+On first run the server downloads the Kyutai TTS model (~0.75B params), Mimi codec, and voice embeddings from HuggingFace Hub. These are cached in `~/.cache/huggingface/hub/` — subsequent starts are instant.
+
+Wait for: `[HH:MM:SS] TTS server ready on ws://localhost:8765`
+
+A legacy single-shot server (`tts-server.py`) is also available for replay fallback.
+
+### 3. Browser App — Vite (port 5173)
+
+```bash
+npm install
+npm run dev       # → http://localhost:5173
+```
+
+### Demo Flow
+
+1. Open `http://localhost:5173`
+2. App shows "Loading: connecting to TTS server…" — WebSocket handshake
+3. Once connected + LLM health-check passes, all 3 model columns appear
+4. Pick a curated philosophical prompt or type your own
+5. Click **Ask** — three LLMs stream reasoning concurrently via `Orchestrator`
+6. Within ~2s of the first tokens, voice 1 begins speaking. When it finishes, voice 2 starts, then voice 3:
+   | Model | Voice | Pan | Color |
+   |---|---|---|---|
+   | Qwen | `alba-mackenna/casual.wav` | left (-0.7) | `#00ff88` |
+   | Gemma | `alba-mackenna/merchant.wav` | center (0.0) | `#ff6644` |
+   | GPT-OSS | `alba-mackenna/announcer.wav` | right (+0.7) | `#44aaff` |
+8. Live waveforms animate per model column (canvas AnalyserNode viz)
+9. Session auto-saves to history (localStorage, max 20 sessions) — click to replay
+
+**Debug overlay:** Press `` ` `` or `Ctrl+Shift+D` to see per-model TTS latency (ms), audio chunk stats, token counts, and pipeline errors. Also enabled via `?debug` query parameter.
+
+### Quick Validation
+
+```bash
+# Terminal 1 — start streaming server
+python server/tts-server-streaming.py
+
+# Terminal 2 — run integration test (once server is ready)
+python server/test_server_streaming.py
+
+# Or test the legacy server:
+# python server/tts-server.py
+# python server/test_server.py
+```
+
+---
 
 ## Prerequisites
 
-- **Node.js 18+** (required for `node:test` and ES modules)
-- **An OpenAI-compatible LLM provider** running locally with at least one reasoning-capable model loaded. [LM Studio](https://lmstudio.ai/) is the default (port 1234).
-- **CORS:** The browser app (Vite dev on port 5173) fetches from the LLM provider on a different port, so the provider **must serve CORS headers**.
-  - **LM Studio:** CORS is enabled by default in recent versions. If requests are blocked, relaunch with `--cors` or enable "Serve on Local Network" in Settings.
-  - **Other providers (Ollama, etc.):** configure the server to include `Access-Control-Allow-Origin: *` or a matching origin.
-- **First run:** the TTS model (~21MB quantized ONNX) downloads into the browser's IndexedDB cache. Subsequent loads are instant.
+- **macOS** with Apple Silicon (M1/M2/M3/M4). MLX requires Metal GPU / Neural Engine.
+- **Python 3.12+** with MLX and `moshi-mlx` (`pip install -r server/requirements.txt`)
+- **Node.js 18+** for ES modules and `node:test`
+- **An OpenAI-compatible LLM provider** running locally with at least one reasoning-capable model. [LM Studio](https://lmstudio.ai/) is the default (port 1234).
+- **CORS:** The browser app (Vite dev on port 5173) fetches from the LLM provider on a different port, so the provider must serve CORS headers. LM Studio enables CORS by default.
 
-The provider URLs are configured in `config.js` — edit the `url` field in each model entry to point at your local server.
+---
+
+## Streaming TTS Protocol
+
+The app uses a push-based streaming TTS protocol over WebSocket:
+
+```
+Client → Server:  {"type":"open_stream",  "voice":"alba-mackenna/casual.wav"}
+Client → Server:  {"type":"text",         "data":"Incremental reasoning text..."}
+Client → Server:  {"type":"close_stream"}
+Server → Client:  {"type":"pcm",          "data":[float32_values]}
+Server → Client:  {"type":"done"}
+Server → Client:  {"type":"error",        "message":"..."}
+```
+
+This enables sub-200ms first-audio latency. A legacy single-shot `{"type":"synthesize"}` protocol is preserved for replay.
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│  UI Layer (renders DOM, handles user events)         │
+│  prompt-selector  column  history                    │
+│  debug-overlay                                       │
+├──────────────────────────────────────────────────────┤
+│  Session Layer (coordinates state across models)     │
+│  orchestrator → channel-pipeline (×3, per model)     │
+│  event-bus (pub-sub)  storage (localStorage + test   │
+│                       adapter seam via MemoryAdapter) │
+├──────────────────────────────────────────────────────┤
+│  LLM Layer (streaming inference)                     │
+│  llm-stream → providers/openai-compatible-provider   │
+│  providers/llm-provider (abstract interface)         │
+│  health-check                                        │
+├──────────────────────────────────────────────────────┤
+│  TTS Layer (text → audio streaming)                  │
+│  tts-engine (abstract streaming interface)           │
+│  kyutai-backend (WebSocket → MLX server)             │
+│  text-chunker (optional prosody tuner, default: off) │
+├──────────────────────────────────────────────────────┤
+│  Audio Layer (Web Audio API + visualization)         │
+│  audio-graph (channels + ducking)                    │
+│  waveform (canvas analyser viz, idle breathing)      │
+├──────────────────────────────────────────────────────┤
+│  Config & Utilities                                  │
+│  config.js  getReasoningContent.js  saveReasoning.js │
+│  normalizeModelName.js                               │
+└──────────────────────────────────────────────────────┘
+
+External processes:
+  LM Studio (port 1234)     — LLM inference
+  Python+MLX server (8765)  — Kyutai DSM TTS via WebSocket
+```
+
+### State Machine
+
+The `Orchestrator` drives a session through: `Idle → Loading → Checking → Thinking → Speaking → Done`. Errors trigger a `stop()` path that resets to `Idle` after 3s.
+
+---
+
+## Project Structure
+
+| File | Responsibility |
+|---|---|
+| `index.html` | Root HTML + loading spinner |
+| `index.js` | App bootstrap: wire UI → Orchestrator → AudioGraph |
+| `config.js` | Static config: models, voices, prompts, TTS params, system prompt |
+| `ui/prompt-selector.js` | Curated cards + free-text input + recent questions + Ask button |
+| `ui/prompt-selector.css` | Prompt selector styles |
+| `ui/column.js` | Per-model text stream, auto-scroll with scroll-back, waveform lifecycle |
+| `ui/column.css` | Column styles |
+| `ui/history.js` | Session history panel with replay support |
+| `ui/history.css` | History panel styles |
+| `ui/debug-overlay.js` | Togglable pipeline diagnostics (TTS latency, queue, tokens, errors) |
+| `ui/debug-overlay.css` | Debug overlay styles |
+| `styles/global.css` | Global CSS reset, variables, animations |
+| `styles/top-bar.css` | Top bar layout |
+| `session/orchestrator.js` | Session lifecycle coordinator (Idle → ... → Done) |
+| `session/channel-pipeline.js` | Per-model pipeline: LLM tokens → TTS → audio channel |
+| `session/event-bus.js` | Lightweight pub-sub event bus (`SimpleEventBus`) |
+| `session/storage.js` | `SessionStore`: persistence with adapter seam |
+| `session/local-storage-adapter.js` | Default storage adapter wrapping `localStorage` |
+| `session/memory-storage-adapter.js` | In-memory storage adapter for tests |
+| `llm/llm-stream.js` | Backward-compatible SSE streaming wrapper (`streamReasoning`) |
+| `llm/health-check.js` | Provider reachability ping via `/models` |
+| `llm/providers/llm-provider.js` | Abstract `LLMProvider` interface |
+| `llm/providers/openai-compatible-provider.js` | OpenAI-compatible SSE implementation with `<think>` tag parsing |
+| `tts/tts-engine.js` | Abstract `TTSEngine` streaming interface (`load`, `startStream`, `stop`, `destroy`) |
+| `tts/kyutai-backend.js` | WebSocket client for Kyutai TTS server (auto-reconnect, both streaming + legacy protocols) |
+| `tts/text-chunker.js` | Optional word accumulator for prosody tuning (punctuation/timeout/max-words flush) |
+| `audio/audio-graph.js` | Web Audio routing + ducking + streaming PCM playback |
+| `audio/waveform.js` | Canvas visualization from AnalyserNode (active bars + idle breathing) |
+| `server/tts-server-streaming.py` | Python+MLX streaming WebSocket server (TTSGen pattern, incremental text) |
+| `server/tts-server.py` | Python+MLX legacy single-shot WebSocket server (replay fallback) |
+| `server/test_server_streaming.py` | Integration tests for the streaming TTS server (6 tests) |
+| `server/test_server.py` | Integration tests for the legacy TTS server (4 tests) |
+| `test/` | Node test runner suites (108 tests, 17 suites) |
+| `docs/debug-overlay-reference.md` | Full debug overlay specification + event bus reference |
+| `docs/adr/` | Architectural Decision Records (4 ADRs) |
+| `getReasoningContent.js` | CLI helper: streams reasoning from an LLM endpoint |
+| `saveReasoning.js` | CLI script: saves reasoning output to timestamped files |
+| `normalizeModelName.js` | CLI utility: normalizes model names (strips provider prefix) |
+| `package.json` | `"the-thinking-machine"`, Vite 8, TypeScript 6 |
+| `tsconfig.json` | TypeScript strict check for JSDoc-typed JS (`tsc --noEmit`) |
+| `vite.config.js` | Vite configuration |
+| `vite-env.d.ts` | Vite client type declarations |
+| `.env` | Legacy CLI script env vars (not loaded by browser) |
+
+---
 
 ## Development
 
@@ -22,9 +216,9 @@ npm install
 npm run dev
 
 # Run tests (Node built-in test runner)
-npm test
+npm test                 # 108 tests, 17 suites
 
-# Type-check JavaScript with TypeScript
+# Type-check JavaScript with TypeScript (strict, checkJs)
 npm run typecheck
 
 # Production build
@@ -34,23 +228,26 @@ npm run build
 npm run preview
 ```
 
-### Debug Overlay
+### Python Server Validation
 
-During development or live demos, toggle the debug overlay to see real-time pipeline state:
-- Append `?debug` to the URL, or press `` ` `` / `Ctrl+Shift+D`
-- Shows per-model token rates, buffer state, TTS queue depth, synthesis timing, and error logs
+```bash
+python3 -c "import py_compile; py_compile.compile('server/tts-server-streaming.py', doraise=True)"
+python3 -c "import py_compile; py_compile.compile('server/test_server_streaming.py', doraise=True)"
+```
 
-## Project Structure
+---
 
-- `index.html` — Root HTML + loading spinner element
-- `index.js` — App bootstrap, loading spinner logic
-- `config.js` — Static config: LLM models, curated prompts, TTS params
-- `ui/` — UI components (prompt selector, mode toggle, columns, history) + per-component CSS
-- `styles/` — Global CSS (reset, variables, spinner animation) and top-bar CSS
-- `audio/` — Audio graph (Web Audio API) and waveform visualization (canvas)
-- `tts/` — Text-to-speech engine (Kokoro backend via kokoro-js)
-- `llm/` — LLM streaming (SSE), provider health checks, and provider abstraction (`llm/providers/`)
-- `session/` — Orchestrator, channel pipeline, event bus, storage (localStorage + adapter seam)
-- `tts/` — Text-to-speech engine (`TTSEngine` interface, Kokoro backend, sentence buffer, playback queue)
-- `test/` — Node test runner suites (35 tests, 8 suites)
-- `docs/` — ADRs and agent operating instructions
+## Legacy CLI Tools
+
+The repo includes standalone CLI scripts for batch reasoning extraction:
+
+```bash
+# Configure via .env
+cp .env.example .env   # (create from template)
+# Set BASE_URL, CHAT_COMPLETION_ENDPOINT, MODEL
+
+# Save reasoning output to data/<model>/<model>-reasoning-<time>-<date>.txt
+node saveReasoning.js
+```
+
+These scripts are independent of the browser app and use `dotenv` for configuration.

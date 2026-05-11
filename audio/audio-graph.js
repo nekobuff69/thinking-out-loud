@@ -1,6 +1,8 @@
 /**
  * @typedef {Object} AudioGraphChannel
  * @property {(buffer: AudioBuffer, onEnd?: () => void) => AudioBufferSourceNode} play
+ * @property {(streamFn: (onChunk: (pcm: Float32Array, sampleRate: number) => void) => (() => void)) => { stop: () => void }} playStream
+ * @property {() => { feed: (pcm: Float32Array, sampleRate: number) => void, end: () => void, stop: () => void }} openStream
  * @property {AnalyserNode} analyser
  * @property {GainNode} gain
  * @property {() => void} stopAll
@@ -68,7 +70,8 @@ export class AudioGraph {
     /**
      * Play an AudioBuffer through this channel.
      * @param {AudioBuffer} buffer
-     * @param {() => void} [onEnd] - called when playback finishes
+     * @param {() => void} [onEnd]
+     * @returns {AudioBufferSourceNode}
      */
     const play = (buffer, onEnd) => {
       this.#activeCount++;
@@ -93,31 +96,250 @@ export class AudioGraph {
     /** Stop all currently-playing sources on this channel. */
     const stopAll = () => {
       for (const source of activeSources) {
-        try { source.stop(); } catch {} // already stopped is fine
+        try { source.stop(); } catch {}
         activeSources.delete(source);
       }
     };
 
-    return { play, analyser, gain, stopAll };
+    /**
+     * Stream PCM chunks for continuous playback via a ring-buffer approach.
+     *
+     * @param {(onChunk: (pcm: Float32Array, sampleRate: number) => void) => (() => void)} streamFn
+     * @returns {{ stop: () => void }}
+     */
+    const playStream = (streamFn) => {
+      this.#activeCount++;
+      this.#updateDucking();
+
+      const sources = new Set();
+      let stopped = false;
+      /** @type {(() => void) | null} */
+      let cleanupFn = null;
+
+      // Gapless scheduling for replay path
+      let nextStartTime = 0;
+
+      /**
+       * @param {Float32Array} pcm
+       * @param {number} sampleRate
+       */
+      const onChunk = (pcm, sampleRate) => {
+        if (stopped) return;
+
+        const buffer = ctx.createBuffer(1, pcm.length, sampleRate);
+        buffer.getChannelData(0).set(pcm);
+
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(gain);
+
+        // Schedule gaplessly
+        const now = ctx.currentTime;
+        if (nextStartTime < now) {
+          nextStartTime = now;
+        }
+        source.start(nextStartTime);
+        nextStartTime += buffer.duration;
+
+        sources.add(source);
+
+        source.onended = () => {
+          sources.delete(source);
+          if (sources.size === 0 && stopped) {
+            this.#activeCount = Math.max(0, this.#activeCount - 1);
+            this.#updateDucking();
+          }
+        };
+      };
+
+      cleanupFn = streamFn(onChunk);
+
+      return {
+        stop: () => {
+          stopped = true;
+          if (cleanupFn) {
+            try { cleanupFn(); } catch {}
+            cleanupFn = null;
+          }
+          for (const source of sources) {
+            try { source.stop(); } catch {}
+            sources.delete(source);
+          }
+          if (sources.size === 0) {
+            this.#activeCount = Math.max(0, this.#activeCount - 1);
+            this.#updateDucking();
+          }
+        },
+      };
+    };
+
+    /**
+     * Number of PCM frames to buffer before starting playback.
+     * Provides a time cushion that absorbs delivery jitter from the
+     * TTS server, preventing buffer underruns that cause stuttering
+     * and repeated audio chunks.
+     *
+     * At 12.5 frames/sec, 4 frames ≈ 320ms of buffered audio.
+     * This trades ~0.3s initial latency for much smoother playback,
+     * especially with 3 concurrent voices competing for GPU time.
+     */
+    const PRE_BUFFER_FRAMES = 4;
+
+    /**
+     * Live streaming PCM feed.
+     *
+     * Designed for the new streaming TTS path: PCM frames arrive asynchronously
+     * from WebSocket onmessage. Each `feed()` call creates and schedules an
+     * AudioBufferSourceNode.
+     *
+     * Pre-buffers the first PRE_BUFFER_FRAMES frames before scheduling
+     * playback, creating a time cushion that absorbs delivery jitter.
+     * Without pre-buffering, the AudioContext fell behind on every underrun,
+     * causing stuttering and repeated audio chunks.
+     *
+     * @returns {{ feed: (pcm: Float32Array, sampleRate: number) => void, end: () => void, stop: () => void }}
+     */
+    const openStream = () => {
+      this.#activeCount++;
+      this.#updateDucking();
+
+      const sources = new Set();
+      let ended = false;
+      let stopped = false;
+
+      // Gapless scheduling: track the next play time so buffers
+      // play back-to-back without overlap or gaps.
+      let nextStartTime = 0;
+
+      // Pre-buffer: accumulate frames before scheduling playback.
+      // This creates a time cushion that absorbs delivery jitter.
+      // Once PRE_BUFFER_FRAMES are collected, all buffered frames
+      // are scheduled starting at ctx.currentTime, and subsequent
+      // frames are scheduled gaplessly from there.
+      /** @type {Array<{pcm: Float32Array, sampleRate: number}>} */
+      let preBuffer = [];
+      let preBufferingDone = false;
+
+      /**
+       * Schedule a single buffer for gapless playback.
+       * @param {Float32Array} pcm
+       * @param {number} sampleRate
+       */
+      const scheduleBuffer = (pcm, sampleRate) => {
+        const buffer = ctx.createBuffer(1, pcm.length, sampleRate);
+        buffer.getChannelData(0).set(pcm);
+
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(gain);
+
+        // Schedule gaplessly: start at nextStartTime, never overlap
+        const now = ctx.currentTime;
+        if (nextStartTime < now) {
+          nextStartTime = now;
+        }
+        source.start(nextStartTime);
+        nextStartTime += buffer.duration;
+
+        sources.add(source);
+
+        source.onended = () => {
+          sources.delete(source);
+        };
+      };
+
+      /**
+       * Flush all pre-buffered frames, scheduling them for gapless playback.
+       */
+      const flushPreBuffer = () => {
+        if (preBuffer.length === 0) return;
+        // Start playback at current time — pre-buffer provides cushion
+        const now = ctx.currentTime;
+        if (nextStartTime < now) {
+          nextStartTime = now;
+        }
+        for (const item of preBuffer) {
+          scheduleBuffer(item.pcm, item.sampleRate);
+        }
+        preBuffer = [];
+        preBufferingDone = true;
+      };
+
+      /**
+       * Feed a PCM frame for playback.
+       * Pre-buffers the first PRE_BUFFER_FRAMES frames before scheduling.
+       * @param {Float32Array} pcm - Float32 PCM samples
+       * @param {number} sampleRate - Sample rate of the PCM data
+       */
+      const feed = (pcm, sampleRate) => {
+        if (stopped || ended) return;
+
+        if (!preBufferingDone) {
+          preBuffer.push({ pcm, sampleRate });
+          if (preBuffer.length >= PRE_BUFFER_FRAMES) {
+            flushPreBuffer();
+          }
+          return;
+        }
+
+        scheduleBuffer(pcm, sampleRate);
+      };
+
+      /**
+       * Signal no more frames. Flushes any remaining pre-buffered frames
+       * and decrements activeCount.
+       */
+      const end = () => {
+        if (ended || stopped) return;
+        // Flush any remaining pre-buffered frames before ending
+        if (!preBufferingDone && preBuffer.length > 0) {
+          flushPreBuffer();
+        }
+        ended = true;
+        this.#activeCount = Math.max(0, this.#activeCount - 1);
+        this.#updateDucking();
+      };
+
+      /**
+       * Immediate kill — stop all sources, clear pre-buffer, decrement activeCount.
+       */
+      const stop = () => {
+        if (stopped) return;
+        stopped = true;
+        preBuffer = [];
+        preBufferingDone = true;
+        for (const source of sources) {
+          try { source.stop(); } catch {}
+          sources.delete(source);
+        }
+        if (!ended) {
+          this.#activeCount = Math.max(0, this.#activeCount - 1);
+          this.#updateDucking();
+        }
+      };
+
+      return { feed, end, stop };
+    };
+
+    return { play, playStream, openStream, analyser, gain, stopAll };
   }
 
   get activeCount() {
     return this.#activeCount;
   }
 
-  /** Remove all channels and disconnect their nodes. Stops any playing audio. */
+  /** Remove all channels, disconnect nodes, stop audio. */
   clearChannels() {
     for (const ch of this.#channels) {
       ch.stopAll?.();
-      try { ch.gain.disconnect(); } catch {} // already disconnected is fine
+      try { ch.gain.disconnect(); } catch {}
     }
     this.#channels.length = 0;
     this.#activeCount = 0;
   }
 
-  /** Close the AudioContext and release resources. */
+  /** Close AudioContext and release resources. */
   destroy() {
-    // Tear down channels before closing context
     this.clearChannels();
     if (this.#ctx) {
       this.#ctx.close();
@@ -128,7 +350,7 @@ export class AudioGraph {
     }
   }
 
-  /** Set up tab visibility handling to keep AudioContext alive. */
+  /** Handle tab visibility for AudioContext resume. */
   enableTabResume() {
     this.#visibilityHandler = () => {
       if (document.visibilityState === "visible" && this.#ctx?.state === "suspended") {

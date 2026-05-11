@@ -1,11 +1,14 @@
 /**
- * Abstract TTSEngine interface.
- * Concrete backends (e.g. Kokoro) extend this class.
+ * Abstract TTSEngine interface — streaming contract.
+ *
+ * Push-based: text is sent to the backend, PCM audio chunks arrive via callback.
+ *
+ * Concrete backends (KyutaiBackend) extend this class.
  */
 export class TTSEngine {
   /**
-   * Load the TTS model. Called once before first synthesis.
-   * Implementations should handle lazy loading and caching.
+   * Initialize the TTS backend. Establishes connection, verifies health.
+   * Called once before any startStream() call.
    * @returns {Promise<void>}
    */
   async load() {
@@ -13,17 +16,30 @@ export class TTSEngine {
   }
 
   /**
-   * Synthesize text to audio using the specified voice.
+   * Begin streaming TTS synthesis.
+   * Sends text to the server and delivers PCM audio chunks as they are generated.
+   *
    * @param {string} text - Text to synthesize
-   * @param {string} voice - Voice identifier
-   * @returns {Promise<AudioBuffer>}
+   * @param {string} voice - Voice identifier (Kyutai pre-computed embedding name)
+   * @param {(pcm: Float32Array, sampleRate: number) => void} onAudioChunk - Called for each PCM frame
+   * @param {{ onDone?: () => void, onError?: (message: string) => void }} [callbacks] - Stream lifecycle callbacks
+   * @returns {void}
    */
-  async synthesize(text, voice) {
-    throw new Error("TTSEngine.synthesize() must be implemented");
+  startStream(text, voice, onAudioChunk, callbacks) {
+    throw new Error("TTSEngine.startStream() must be implemented");
   }
 
   /**
-   * Clean up runtime resources.
+   * Abort the current stream. No more PCM chunks will be delivered.
+   * The WebSocket connection remains open for future streams.
+   * @returns {void}
+   */
+  stop() {
+    throw new Error("TTSEngine.stop() must be implemented");
+  }
+
+  /**
+   * Tear down the backend. Closes WebSocket, releases resources.
    * @returns {void}
    */
   destroy() {

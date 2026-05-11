@@ -13,9 +13,7 @@
     "test": "node --experimental-test-module-mocks --test test/*.test.js"
   },
   "dependencies": {
-    "@huggingface/transformers": "^3.8.1",
-    "dotenv": "^17.2.3",
-    "kokoro-js": "^1.2.1"
+    "dotenv": "^17.2.3"
   },
   "devDependencies": {
     "typescript": "^6.0.3",
