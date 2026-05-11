@@ -205,6 +205,51 @@ describe("AudioGraph playStream", () => {
     assert.strictEqual(typeof channel.play, "function");
     assert.strictEqual(typeof channel.playStream, "function");
   });
+
+  it("playStream first buffer starts at ctx.currentTime when no prior buffers", async () => {
+    const graph = new AudioGraph();
+    const channel = graph.createChannel(0.0);
+
+    const streamHandle = channel.playStream((onChunk) => {
+      onChunk(new Float32Array([0.1, 0.2, 0.3]), 24000);
+      return () => {};
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.ok(mockCtx.scheduledSources.length >= 1, "should schedule at least 1 source");
+    assert.strictEqual(mockCtx.scheduledSources[0].when, 0,
+      "first buffer scheduled at ctx.currentTime");
+
+    streamHandle.stop();
+  });
+
+  it("playStream.onChunk() schedules buffers with monotonic non-overlapping when values", async () => {
+    const graph = new AudioGraph();
+    const channel = graph.createChannel(0.0);
+
+    const streamHandle = channel.playStream((onChunk) => {
+      onChunk(new Float32Array([0.1, 0.2]), 24000);
+      onChunk(new Float32Array([0.3, 0.4, 0.5]), 24000);
+      return () => {};
+    });
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.ok(mockCtx.scheduledSources.length >= 2, "should schedule 2 sources");
+
+    // First buffer at currentTime
+    assert.strictEqual(mockCtx.scheduledSources[0].when, 0,
+      "first buffer starts at currentTime");
+
+    // Each subsequent buffer starts strictly after the previous one (non-overlapping)
+    for (let i = 1; i < mockCtx.scheduledSources.length; i++) {
+      assert.ok(mockCtx.scheduledSources[i].when > mockCtx.scheduledSources[i - 1].when,
+        `buffer ${i} starts after buffer ${i - 1} (non-overlapping)`);
+    }
+
+    streamHandle.stop();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -339,5 +384,58 @@ describe("AudioGraph openStream", () => {
     const channel = graph.createChannel(0.0);
 
     assert.strictEqual(typeof channel.openStream, "function");
+  });
+
+  it("openStream first buffer starts at ctx.currentTime when no prior buffers", async () => {
+    const graph = new AudioGraph();
+    const channel = graph.createChannel(0.0);
+
+    const handle = channel.openStream();
+    handle.feed(new Float32Array([0.1, 0.2, 0.3]), 24000);
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.ok(mockCtx.scheduledSources.length >= 1, "should schedule at least 1 source");
+    // First buffer starts at ctx.currentTime (0 in mock)
+    assert.strictEqual(mockCtx.scheduledSources[0].when, 0,
+      "first buffer scheduled at ctx.currentTime");
+
+    handle.end();
+  });
+
+  it("openStream.feed() schedules buffers with monotonic non-overlapping when values", async () => {
+    const graph = new AudioGraph();
+    const channel = graph.createChannel(0.0);
+
+    const handle = channel.openStream();
+
+    // Feed two PCM chunks with known durations
+    const pcm1 = new Float32Array([0.1, 0.2, 0.3]);   // 3 samples
+    const pcm2 = new Float32Array([0.4, 0.5, 0.6, 0.7]);  // 4 samples
+    const sampleRate = 24000;
+
+    handle.feed(pcm1, sampleRate);
+    handle.feed(pcm2, sampleRate);
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.ok(mockCtx.scheduledSources.length >= 2, "should schedule 2 sources");
+
+    // First buffer always starts at ctx.currentTime
+    assert.strictEqual(mockCtx.scheduledSources[0].when, 0,
+      "first buffer starts at currentTime");
+
+    // Second buffer starts after first buffer ends — non-overlapping
+    const buf1Duration = pcm1.length / sampleRate;
+    assert.ok(mockCtx.scheduledSources[1].when >= mockCtx.scheduledSources[0].when + buf1Duration,
+      "second buffer starts after first buffer ends (no overlap)");
+
+    // Third+ buffers (if any) continue the monotonic sequence
+    for (let i = 2; i < mockCtx.scheduledSources.length; i++) {
+      assert.ok(mockCtx.scheduledSources[i].when >= mockCtx.scheduledSources[i - 1].when,
+        `buffer ${i} starts at or after buffer ${i - 1}`);
+    }
+
+    handle.end();
   });
 });

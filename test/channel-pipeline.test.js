@@ -862,6 +862,102 @@ describe("ChannelPipeline", () => {
   });
 
   // ------------------------------------------------------------------
+  // Resume behavior — sends accumulated text / handles empty case
+  // ------------------------------------------------------------------
+
+  it("resume() sends full reasoningText via sendText when text accumulated", async () => {
+    /** @type {string[]} */
+    const deltas = [];
+
+    const mockTtsEngine = {
+      load: async () => {},
+      startStream: () => {},
+      stop: () => {},
+      openStream: () => ({
+        sendText: (/** @type {string} */ text) => { deltas.push(text); },
+        close: () => {},
+      }),
+      destroy: () => {},
+    };
+
+    const mockLlmProvider = {
+      streamReasoning: async (
+        /** @type {string} */ _q,
+        /** @type {string} */ _s,
+        /** @type {{ onReasoningToken?: (token: string) => void }} */ cb
+      ) => {
+        cb.onReasoningToken?.("Hello");
+        cb.onReasoningToken?.(" world");
+        return new Promise(() => {}); // keep LLM running
+      },
+    };
+
+    const { pipeline } = makePipeline({ ttsEngine: mockTtsEngine, llmProvider: mockLlmProvider });
+    pipeline.startStream("system prompt", "question");
+
+    // Wait for first-chunk 50ms timeout to flush initial text
+    await new Promise((r) => setTimeout(r, 80));
+
+    // Pause: subsequent feedToken calls skip #feedTts but still accumulate reasoningText
+    pipeline.pause();
+    pipeline.feedToken(" more");
+    pipeline.feedToken(" tokens.");
+
+    const beforeResume = deltas.length;
+    pipeline.resume();
+    await new Promise((r) => setTimeout(r, 10));
+
+    // sendText should have been called with the full accumulated reasoning text
+    assert.ok(deltas.length > beforeResume, "sendText called on resume");
+    const lastText = deltas[deltas.length - 1];
+    assert.ok(lastText.includes("Hello"), "resume text contains first tokens");
+    assert.ok(lastText.includes("tokens"), "resume text contains post-pause tokens");
+
+    pipeline.softStop();
+  });
+
+  it("resume() does not call sendText when reasoningText is empty", async () => {
+    /** @type {string[]} */
+    const deltas = [];
+
+    const mockTtsEngine = {
+      load: async () => {},
+      startStream: () => {},
+      stop: () => {},
+      openStream: () => ({
+        sendText: (/** @type {string} */ text) => { deltas.push(text); },
+        close: () => {},
+      }),
+      destroy: () => {},
+    };
+
+    const mockLlmProvider = {
+      streamReasoning: async (
+        /** @type {string} */ _q,
+        /** @type {string} */ _s,
+        /** @type {{ onDone?: () => void }} */ cb
+      ) => {
+        cb.onDone?.();
+      },
+    };
+
+    const { pipeline } = makePipeline({ ttsEngine: mockTtsEngine, llmProvider: mockLlmProvider });
+    await pipeline.startStream("system prompt", "question");
+    await new Promise((r) => setTimeout(r, 20));
+
+    pipeline.pause();
+    const beforeResume = deltas.length;
+    pipeline.resume();
+    await new Promise((r) => setTimeout(r, 10));
+
+    // No tokens were fed → reasoningText is empty → no sendText call
+    assert.strictEqual(deltas.length, beforeResume,
+      "no sendText when reasoningText is empty");
+
+    pipeline.softStop();
+  });
+
+  // ------------------------------------------------------------------
   // Resume after flushAndClose — #ttsStreamOpened must reset
   // ------------------------------------------------------------------
 
