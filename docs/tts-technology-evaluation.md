@@ -7,12 +7,15 @@ Evaluate voice cloning, quality, performance, and integration feasibility.
 
 **Pocket TTS: YES, natively.** `get_state_for_audio_prompt("./my_voice.wav")`
 encodes any WAV/MP3 through Mimi → FlowLM speaker projection → ready for generation.
+Export as `.safetensors` for instant reload.
 
-**Current DSM (moshi-mlx): NO direct path.** Voices are pre-computed Mimi speaker
-embeddings (`.safetensors` with `speaker_wavs` key). No WAV→embedding pipeline
-exists in our codebase or moshi-mlx API. Workaround: pre-compute embeddings
-offline, reference via `file://` prefix or local path.
-
+**Current DSM (moshi-mlx): NO.** Voice embeddings require a gated/private model
+(`_mimi_voice.safetensors`) that Kyutai has not released publicly. The standard Mimi
+encoder produces latents with the correct shape but **wrong value distribution**
+(std≈0.06 vs std≈0.72 for working voices). Attempting to use raw Mimi encoder
+output as a voice embedding results in garbled/noise audio.
+Source: [moshi#404](https://github.com/kyutai-labs/moshi/issues/404).
+Workaround: request Kyutai to generate embeddings one-off, or switch to Pocket TTS.
 ## Architecture Comparison
 
 | Criterion | DSM (current) | Pocket TTS |
@@ -80,26 +83,37 @@ Pre-compute once, save as `.safetensors`, reload instantly.
 
 **The central tension:** DSM's incremental text streaming is the app's
 architectural differentiator (ADR-003, ADR-004). Pocket TTS wins on resources,
-voice cloning, and simplicity but cannot do true incremental text feeding.
+voice cloning, and simplicity but requires full sentences (not token-level text).
+However, voice cloning is a hard requirement, and DSM's voice cloning weights
+are gated/private — making Pocket TTS the only viable path for custom voices.
 
-## Recommendation
+## Recommendation (revised 2026-05-13)
 
-**Bridge, don't switch.** Use Pocket TTS as voice embedding pre-processor,
-keep DSM for streaming synthesis:
+**Switch to Pocket TTS.** The gated DSM voice cloning model forces this choice.
 
-1. Add Pocket TTS as optional dependency for voice ingestion
-2. Server accepts raw WAV paths, computes embeddings via Pocket TTS internally
-3. Convert to DSM-compatible format or adapt conditioning path
-4. DSM continues handling live incremental streaming as today
+1. Replace DSM WebSocket server with Pocket TTS (Python library or HTTP server)
+2. Use `get_state_for_audio_prompt()` for voice cloning (WAV → voice state)
+3. Export voice states as `.safetensors` for fast reload at startup
+4. Adapt orchestrator/channel-pipeline for sentence-level requests
+   (reuse existing `text-chunker.js` for sentence splitting)
+5. Leverage `generate_audio_stream()` for streaming audio output per sentence
 
-**When a full switch to Pocket TTS makes sense:**
-- CPU-only deployment required (Intel Mac, low-power, battery priority)
-- Incremental streaming not critical (sentence-level audio acceptable)
-- Simpler stack desired (HTTP instead of WebSocket, fewer dependencies)
+**Why not bridge:** The DSM `speaker_wavs` format depends on a private model.
+The raw Mimi encoder output distribution differs by 12× in variance from
+working embeddings. There is no viable conversion path without the gated model.
 
-Switching would require: protocol rewrite (WebSocket→HTTP), re-add sentence
-accumulator in pipeline, rewrite KyutaiBackend, new server (~2-3 weeks).
+**Switching impact:**
+- Protocol: WebSocket → HTTP POST with `StreamingResponse` (or direct Python API)
+- Server: 700-line custom asyncio+MLX → Pocket TTS library (~200 lines)
+- Pipeline: Rewrite KyutaiBackend, update channel-pipeline
+- Benefits: native voice cloning, 200ms first audio, CPU-only, 10× less memory
+- Deprecate: `server/tts-server-streaming.py`, `tts/kyutai-backend.js`
 
+### Previous recommendation (superseded 2026-05-13)
+
+*Bridge approach (2026-05-12): Use Pocket TTS as voice embedding pre-processor,
+keep DSM for streaming synthesis. Invalidated upon discovering the
+gated voice cloning model requirement.*
 ## External Resources
 
 ### Papers
