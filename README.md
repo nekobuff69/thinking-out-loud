@@ -14,38 +14,27 @@ LM Studio → Load model → Start Server (port 1234)
 
 The app health-checks `/models` on startup — unreachable models are grayed out.
 
-### 2. TTS Server — Python+MLX (port 8765)
+### 2. TTS Server — Pocket TTS (port 8080)
 
 ```bash
 cd server
 pip install -r requirements.txt
 ```
 
-> **Note:** `moshi-mlx` depends on `sentencepiece==0.2`, which may need a Rust toolchain for source builds on macOS. If the pip build fails:
-> ```bash
-> curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # install Rust
-> pip install -r requirements.txt                                     # retry
-> ```
-
-Start the streaming server:
+Start the Pocket TTS server:
 
 ```bash
-# Full precision (best quality, needs Apple Silicon)
-python server/tts-server-streaming.py
+python server/tts-server-pocket.py
 
-# 8-bit quantized for slower Macs (M1 Air, etc.)
-python server/tts-server-streaming.py --quantize 8
-
-# Custom port
-python server/tts-server-streaming.py --port 9000
+# Custom port / host
+python server/tts-server-pocket.py --port 9000 --host 0.0.0.0
 ```
 
-On first run the server downloads the Kyutai TTS model (~0.75B params), Mimi codec, and voice embeddings from HuggingFace Hub. These are cached in `~/.cache/huggingface/hub/` — subsequent starts are instant.
+On first run the server downloads Pocket TTS (~100M params) from HuggingFace Hub. Cached in `~/.cache/huggingface/hub/` — subsequent starts are instant.
 
-Wait for: `[HH:MM:SS] TTS server ready on ws://localhost:8765`
+Wait for: `[HH:MM:SS] [INFO] Starting Pocket TTS server on 127.0.0.1:8080`
 
-A legacy single-shot server (`tts-server.py`) is also available for replay fallback.
-
+**Voice cloning:** Drop any `.wav` file in `voices/` and restart — the server auto-detects and loads it as a selectable voice.
 ### 3. Browser App — Vite (port 5173)
 
 ```bash
@@ -56,16 +45,16 @@ npm run dev       # → http://localhost:5173
 ### Demo Flow
 
 1. Open `http://localhost:5173`
-2. App shows "Loading: connecting to TTS server…" — WebSocket handshake
+2. App shows "Loading: connecting to TTS server…" — HTTP health check
 3. Once connected + LLM health-check passes, all 3 model columns appear
 4. Pick a curated philosophical prompt or type your own
 5. Click **Ask** — three LLMs stream reasoning concurrently via `Orchestrator`
 6. Within ~2s of the first tokens, voice 1 begins speaking. When it finishes, voice 2 starts, then voice 3:
    | Model | Voice | Pan | Color |
    |---|---|---|---|
-   | Qwen | `alba-mackenna/casual.wav` | left (-0.7) | `#00ff88` |
-   | Gemma | `alba-mackenna/merchant.wav` | center (0.0) | `#ff6644` |
-   | GPT-OSS | `alba-mackenna/announcer.wav` | right (+0.7) | `#44aaff` |
+   | Qwen | `eve` | left (-0.5) | `#00ff88` |
+   | Gemma | `user_clone` | center (0.0) | `#ff6644` |
+   | GPT-OSS | `alba` | right (+0.5) | `#44aaff` |
 8. Live waveforms animate per model column (canvas AnalyserNode viz)
 9. Session auto-saves to history (localStorage, max 20 sessions) — click to replay
 
@@ -74,46 +63,32 @@ npm run dev       # → http://localhost:5173
 ### Quick Validation
 
 ```bash
-# Terminal 1 — start streaming server
-python server/tts-server-streaming.py
+# Terminal 1 — start Pocket TTS server
+python server/tts-server-pocket.py
 
 # Terminal 2 — run integration test (once server is ready)
-python server/test_server_streaming.py
-
-# Or test the legacy server:
-# python server/tts-server.py
-# python server/test_server.py
+python server/test_server_pocket.py
 ```
-
 ---
 
 ## Prerequisites
 
-- **macOS** with Apple Silicon (M1/M2/M3/M4). MLX requires Metal GPU / Neural Engine.
-- **Python 3.12+** with MLX and `moshi-mlx` (`pip install -r server/requirements.txt`)
+- **macOS** with Apple Silicon (M1/M2/M3/M4) or CPU-only mode
+- **Python 3.10+** with PyTorch (`pip install -r server/requirements.txt`)
 - **Node.js 18+** for ES modules and `node:test`
 - **An OpenAI-compatible LLM provider** running locally with at least one reasoning-capable model. [LM Studio](https://lmstudio.ai/) is the default (port 1234).
 - **CORS:** The browser app (Vite dev on port 5173) fetches from the LLM provider on a different port, so the provider must serve CORS headers. LM Studio enables CORS by default.
 
----
-
 ## Streaming TTS Protocol
 
-The app uses a push-based streaming TTS protocol over WebSocket:
+The app sends sentence-level text via HTTP POST to the Pocket TTS server:
 
 ```
-Client → Server:  {"type":"open_stream",  "voice":"alba-mackenna/casual.wav"}
-Client → Server:  {"type":"text",         "data":"Incremental reasoning text..."}
-Client → Server:  {"type":"close_stream"}
-Server → Client:  {"type":"pcm",          "data":[float32_values]}
-Server → Client:  {"type":"done"}
-Server → Client:  {"type":"error",        "message":"..."}
+POST /v1/tts  {"text": "Hello world.", "voice": "eve"}
+→ streaming audio/wav (24kHz mono float32)
 ```
 
-This enables sub-200ms first-audio latency. A legacy single-shot `{"type":"synthesize"}` protocol is preserved for replay.
-
----
-
+Sub-200ms first-audio latency per sentence. TextChunker splits reasoning on punctuation (`.!?;,`), max words, or silence timeout before sending.
 ## Architecture
 
 ```
@@ -147,8 +122,8 @@ This enables sub-200ms first-audio latency. A legacy single-shot `{"type":"synth
 └──────────────────────────────────────────────────────┘
 
 External processes:
-  LM Studio (port 1234)     — LLM inference
-  Python+MLX server (8765)  — Kyutai DSM TTS via WebSocket
+  LM Studio (port 1234)        — LLM inference
+  Pocket TTS server (8080)     — TTS via HTTP
 ```
 
 ### State Machine
@@ -214,8 +189,7 @@ npm install
 npm run dev
 
 # Run tests (Node built-in test runner)
-npm test                 # 108 tests, 17 suites
-
+npm test                 # 91 tests, 14 suites
 # Type-check JavaScript with TypeScript (strict, checkJs)
 npm run typecheck
 
@@ -229,9 +203,8 @@ npm run preview
 ### Python Server Validation
 
 ```bash
-python3 -c "import py_compile; py_compile.compile('server/tts-server-streaming.py', doraise=True)"
-python3 -c "import py_compile; py_compile.compile('server/test_server_streaming.py', doraise=True)"
-```
+python3 -c "import py_compile; py_compile.compile('server/tts-server-pocket.py', doraise=True)"
+python3 -c "import py_compile; py_compile.compile('server/test_server_pocket.py', doraise=True)"
 
 ---
 

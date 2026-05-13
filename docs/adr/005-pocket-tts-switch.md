@@ -33,11 +33,10 @@ Pocket TTS satisfies all key requirements:
 - **Streaming:** audio chunks yielded as decoded (~200ms first audio)
 - **Resource footprint:** 10× smaller, CPU-only, no GPU needed on Apple Silicon
 
-The main trade-off is losing DSM's **token-level incremental text feeding**. Pocket TTS requires full sentences (or at least complete token sequences) before generating audio. However:
-- The app already has a `text-chunker.js` that splits text into sentences
-- The sentence-level granularity is sufficient for the app's use case (LLMs output paragraph-level reasoning)
-- The 200ms first-audio latency per sentence is competitive with DSM's ~2.5s warmup
-
+The main trade-off is losing DSM's **token-level incremental text feeding**. Pocket TTS requires complete sentences before generating audio. However:
+- The app's `text-chunker.js` splits text on configurable punctuation (`.!?;,`), max words, and silence timeout — producing natural sentence/clause boundaries
+- The clause-level granularity is sufficient for the app's use case (LLMs output paragraph-level reasoning)
+- The 200ms first-audio latency per chunk is competitive with DSM's ~2.5s warmup
 ## Consequences
 
 ### What changes
@@ -68,7 +67,7 @@ The main trade-off is losing DSM's **token-level incremental text feeding**. Poc
 - No HuggingFace authentication issues (Pocket TTS weights are public)
 
 ### Risks
-- **Sentence-level latency:** If a sentence is very long, audio won't start until the full sentence is tokenized. Mitigation: text-chunker can split on commas or other mid-sentence boundaries.
+- **Sentence-level latency:** If a sentence is very long, audio won't start until the full sentence is tokenized. Mitigation: text-chunker splits on commas and other mid-sentence punctuation, configurable via `chunkerPunctuation` in `config.js`.
 - **PyTorch dependency:** Pocket TTS requires PyTorch (vs MLX for DSM). Both are available on the user's machine.
 - **Speaker similarity:** Pocket TTS ELO 1898 vs DSM 2037. Pocket TTS may be slightly less faithful to the original voice timbre.
 - **Backward compatibility:** This is a breaking change. The new protocol is HTTP-based, not WebSocket. All TTS-related code must be rewritten together.

@@ -65,7 +65,7 @@ index.html ──► index.js (bootstraps everything)
 │  └── llm/health-check.js      /models ping for reachability │
 ├─────────────────────────────────────────────────────────────┤
 │  Config & Utilities                                         │
-│  ├── config.js                Models, prompts, TTS config   │
+|  ├── config.js                Models, prompts, TTS config (chunker params) |
 │  ├── getReasoningContent.js   Standalone reasoning fetcher  │
 │  ├── saveReasoning.js         Standalone reasoning saver    │
 │  └── normalizeModelName.js    Slugify model names           │
@@ -92,8 +92,9 @@ Orchestrator:
      • Pipelines 2 and 3 are paused — only pipeline 1 feeds TTS initially
   4. Fire all LLM streams concurrently via `LLMProvider.streamReasoning()`
      • Tokens → ChannelPipeline.feedToken() → Column.appendToken() all 3 models
-     • Only pipeline 1 feeds TTS: TextChunker splits reasoning into sentences,
-       each complete sentence sent via HTTP POST to Pocket TTS server
+    • Only pipeline 1 feeds TTS: TextChunker splits reasoning on
+      punctuation (`.!?;,` configurable), max words (15), or silence
+      timeout (2000ms, min 3 words). Each sentence sent via HTTP POST.
      • Each sentence → PocketTtsBackend.startStream() → POST /v1/tts →
        server generates streaming WAV audio
      • PCM frames stream back over HTTP → AudioGraph channel → waveform animates
@@ -130,20 +131,21 @@ Owns one Model's entire pipeline end-to-end. The Orchestrator delegates to it.
 new ChannelPipeline({ model, ttsConfig, column, ttsBackend, llmProvider, audioGraph, onIdle, eventBus })
   .createChannel()                    // Creates audio channel (openStream mode) + waveform
   .startStream(systemPrompt, question, signal?)  // → Promise (LLM → incremental TTS)
-  .drainText(text)                    // Replay stored reasoning (uses legacy synthesiz protocol)
-  .feedToken(token)                   // Manual token injection → accumulator → sendText()
-  .softStop()                         // Close stream handles + stop audio. Backend stays alive.
-  .pause() / .resume()                // Stop/start sendText() calls (sequential TTS playback)
+  .drainText(text)                    // Replay stored reasoning (legacy synthesize protocol)
+  .feedToken(token)                   // Token injection → TextChunker → sentence queue
+  .softStop()                         // Abort HTTP requests + stop audio. Backend stays alive.
+  .pause() / .resume()                // Pause/resume TTS feeding (sequential playback)
   .isActive / .isCapped / .reasoningText  // Getters
 ```
 
-**Text feeding (live path):** Tokens accumulate in `#unsentBuffer`. On word boundary (whitespace
-or sentence-ending punctuation), or first-chunk 50ms timeout, the buffer contents are sent as
-a `text` WebSocket message via the backend's stream handle. The buffer is then cleared
-(drain-on-send). Token cap stops `sendText()` calls and closes the stream; server continues
-generating from already-queued entries. Paused pipelines accumulate text in `#reasoningText`
-but skip TTS feeding until `resume()` sends the full accumulated text and closes the stream.
 
+**Text feeding (live path):** Tokens route through TextChunker, which flushes on
+punctuation (`.` `!` `?` `;` `,` — configurable), max words (default 15), or silence timeout
+(2000ms, min 3 words). Each flushed chunk enters the `#sentenceQueue` and is sent as a
+separate HTTP POST via `PocketTtsBackend.startStream()`. Sentences play sequentially
+— next starts only after current `onDone`. A single audio stream (`openStream()`) is
+reused across all sentences. Paused pipelines skip TTS feeding; `resume()` re-feeds the
+full accumulated `#reasoningText` through the TextChunker.
 **Replay path:** `drainText()` uses the legacy `startStream(fullText, voice, ...)` API and
 `playStream(streamFn)` audio mode — no incremental protocol needed for pre-recorded text.
 
@@ -221,7 +223,7 @@ bus.on("tts-first-chunk", (data) => { ... });   // { modelName, latencyMs }
 bus.on("tts-text-sent", (data) => { ... });     // { modelName, chars, words }
 bus.on("tts-done", (data) => { ... });          // { modelName }
 bus.on("tts-error", (data) => { ... });         // { modelName, message }
-bus.on("tts-reconnect", (data) => { ... });     // { modelName } — WebSocket reconnected, audio re-init
+bus.on("tts-reconnect", (data) => { ... });     // { modelName } — TTS reconnected, audio re-init
 bus.on("tts-text-dropped", (data) => { ... });  // { modelName, reason, chars } — text lost to closed stream
 bus.on("pipeline-progress", (data) => { ... }); // { modelName, stage }
 bus.on("pipeline-error", (data) => { ... });    // { modelName, message, timestamp }
@@ -260,7 +262,7 @@ channel.analyser / channel.gain / channel.stopAll
 ```
 
 **`openStream()` mode (live path):** `feed(pcm, sampleRate)` creates and schedules an
-AudioBufferSourceNode from PCM data — called asynchronously from WebSocket `onmessage`.
+AudioBufferSourceNode from PCM data — called asynchronously from HTTP response stream.
 `end()` signals no more frames coming. `stop()` kills all sources immediately.
 Shares ducking and `activeCount` with `playStream`.
 
@@ -277,9 +279,9 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
   │         │           │
   │         │           └─► (health-check providers)
   │         │
-  │         └─► (connect to TTS server via WebSocket ping)
+  │         └─► (HTTP health check to Pocket TTS server)
   │
-  └─── Stop ──► Done ──► Idle (immediate kill: close streams, kill WebSocket, fresh slate)
+  └─── Stop ──► Done ──► Idle (immediate kill: abort HTTP requests, stop audio, fresh slate)
 ```
 
 ## File Inventory
@@ -306,7 +308,7 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `session/memory-storage-adapter.js` | In-memory adapter for tests | Shallow |
 | `tts/pocket-tts-backend.js` | HTTP client for Pocket TTS server (live + replay API, debug events) | Deep |
 | `tts/tts-engine.js` | Abstract TTS streaming interface | Shallow (interface) |
-| `tts/text-chunker.js` | Sentence-boundary accumulator | Shallow |
+| `tts/text-chunker.js` | Sentence/clause accumulator with configurable punctuation, max words, and silence timeout | Shallow |
 | `server/tts-server-pocket.py` | Pocket TTS HTTP server (FastAPI, streaming WAV response, voice cloning) | Deep |
 | `server/test_server_pocket.py` | Python integration tests for Pocket TTS server | Shallow (test) |
 | `server/requirements.txt` | Python server dependencies (pocket-tts, fastapi, uvicorn, numpy, scipy) | Shallow (config) |
@@ -324,7 +326,7 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `vite-env.d.ts` | Vite/CSS module type declarations | Shallow (types) |
 | `.gitignore` | Ignored files (node_modules, .env, scratch) | Shallow (config) |
 | `.env` | Legacy CLI script vars (not read by browser app) | Shallow (config) |
-| `test/` | Node test runner suites (98 tests, 17 suites) | Shallow (test) |
+| `test/` | Node test runner suites (91 tests, 14 suites) | Shallow (test) |
 | `ui/debug-overlay.js` | Togglable pipeline diagnostics panel | Deep |
 | `ui/debug-overlay.css` | Debug overlay styling | Shallow (style) |
 
@@ -348,9 +350,9 @@ npm test
 | `llm-stream.test.js` | 4 | Endpoint construction with/without trailing slashes |
 | `openai-compatible-provider.test.js` | 9 | Separate/tagged/none reasoning formats, URL construction, retry, abort |
 | `orchestrator.test.js` | 3 | stop() → Idle transition, no-save after stop, monologue sequencing |
-| `channel-pipeline.test.js` | 16 | Empty LLM stream detection, TTS streaming path, word-boundary deltas, no-restart guarantee, token cap, content boundary, first-chunk timeout, softStop isolation, reconnect audio recovery, resume after close, replay guard |
+| `channel-pipeline.test.js` | 17 | Empty LLM stream detection, sentence streaming, sequential playback, token cap, content boundary, softStop isolation, reconnect recovery, resume/replay, replay guard |
 | `audio-graph-stream.test.js` | 7 | playStream PCM playback, scheduling, ducking, stop; openStream feed/end/stop/ducking |
-| `text-chunker.test.js` | 16 | Punctuation/timeout/max-words flush, no-premature-flush, disabled punctuation
+| `text-chunker.test.js` | 18 | Punctuation (incl. comma), max-words, timeout, min-words guard, disabled punctuation, manual/reset |
 
 ### Testable modules (for new tests)
 

@@ -31,7 +31,7 @@ export class TTSEngine {
 
   /**
    * Abort the current stream. No more PCM chunks will be delivered.
-   * The WebSocket connection remains open for future streams.
+   * The backend connection remains open for future streams.
    * @returns {void}
    */
   stop() {
@@ -39,7 +39,7 @@ export class TTSEngine {
   }
 
   /**
-   * Tear down the backend. Closes WebSocket, releases resources.
+   * Tear down the backend. Closes connection, releases resources.
    * @returns {void}
    */
   destroy() {
