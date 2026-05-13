@@ -18,9 +18,12 @@ export class TextChunker {
   #maxWords;
   /** @type {number} */
   #timeoutMs;
+  /** @type {number} */
+  #minWordsForTimeout;
   /** @type {boolean} */
   #flushOnPunctuation;
-
+  /** @type {string} */
+  #punctuation;
   /** @type {string} */
   #buffer = "";
   /** @type {number} */
@@ -33,12 +36,16 @@ export class TextChunker {
    * @param {(text: string) => void} opts.onFlush - Called with accumulated text when a flush trigger fires
    * @param {number} [opts.maxWords=8] - Max words before forcing a flush
    * @param {number} [opts.timeoutMs=150] - Max ms since last feed before flushing
+   * @param {number} [opts.minWordsForTimeout=3] - Min words in buffer before timeout can trigger
+   * @param {string} [opts.punctuation=".!?;,"] - Characters that trigger a flush
    * @param {boolean} [opts.flushOnPunctuation=true] - Whether to flush on punctuation marks
    */
-  constructor({ onFlush, maxWords = 8, timeoutMs = 150, flushOnPunctuation = true }) {
+  constructor({ onFlush, maxWords = 8, timeoutMs = 150, minWordsForTimeout = 3, punctuation = ".!?;,", flushOnPunctuation = true }) {
     this.#onFlush = onFlush;
     this.#maxWords = maxWords;
     this.#timeoutMs = timeoutMs;
+    this.#minWordsForTimeout = minWordsForTimeout;
+    this.#punctuation = punctuation;
     this.#flushOnPunctuation = flushOnPunctuation;
   }
 
@@ -136,7 +143,7 @@ export class TextChunker {
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = setTimeout(() => {
       this.#timer = null;
-      this.#flush();
+      if (this.#wordCount >= this.#minWordsForTimeout) this.#flush();
     }, this.#timeoutMs);
   }
 
@@ -155,8 +162,7 @@ export class TextChunker {
    */
   #findPunctuation(text) {
     for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (ch === "." || ch === "!" || ch === "?" || ch === ";") {
+      if (this.#punctuation.includes(text[i])) {
         return i;
       }
     }

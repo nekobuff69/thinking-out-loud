@@ -295,9 +295,11 @@ export class Orchestrator {
       // Wire TextChunker if enabled in config
       if (this.#ttsConfig.useTextChunker) {
         const chunker = new TextChunker({
-          maxWords: 8,
-          timeoutMs: 150,
-          flushOnPunctuation: true,
+          maxWords: this.#ttsConfig.chunkerMaxWords ?? 15,
+          timeoutMs: this.#ttsConfig.chunkerTimeoutMs ?? 2000,
+          minWordsForTimeout: this.#ttsConfig.chunkerMinWordsForTimeout ?? 3,
+          punctuation: this.#ttsConfig.chunkerPunctuation ?? ".!?;,",
+          flushOnPunctuation: this.#ttsConfig.chunkerFlushOnPunctuation ?? true,
           onFlush: (text) => pipeline.flushTts(text),
         });
         pipeline.setTextChunker(chunker);

@@ -51,6 +51,13 @@ describe("TextChunker", () => {
     assert.strictEqual(flushes[0], "think;");
   });
 
+  it("flushes on comma", () => {
+    const c = createChunker();
+    c.feed("hello, world");
+    assert.strictEqual(flushes.length, 1);
+    assert.strictEqual(flushes[0], "hello,");
+  });
+
   it("flushes on max word count reached", () => {
     const c = createChunker({ maxWords: 3 });
     // Feed up to 3 words
@@ -61,11 +68,24 @@ describe("TextChunker", () => {
 
   it("flushes on timeout", async () => {
     const c = createChunker({ maxWords: 20, timeoutMs: 20 });
-    c.feed("hello world");
+    c.feed("hello world again");
     // Wait for timeout
     await new Promise((r) => setTimeout(r, 50));
     assert.strictEqual(flushes.length, 1);
-    assert.strictEqual(flushes[0], "hello world");
+    assert.strictEqual(flushes[0], "hello world again");
+  });
+
+  it("timeout does not flush when fewer than 3 words", async () => {
+    const c = createChunker({ maxWords: 20, timeoutMs: 20 });
+    c.feed("hello world");
+    await new Promise((r) => setTimeout(r, 50));
+    assert.strictEqual(flushes.length, 0);
+
+    // Adding a third word triggers flush on next timeout
+    c.feed(" again");
+    await new Promise((r) => setTimeout(r, 50));
+    assert.strictEqual(flushes.length, 1);
+    assert.strictEqual(flushes[0], "hello world again");
   });
 
   it("does not flush before any trigger", () => {
