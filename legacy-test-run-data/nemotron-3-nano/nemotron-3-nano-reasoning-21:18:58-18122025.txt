@@ -1,5 +1,0 @@
-We need to answer the user question: "How does a LLM go to sleep?" They want a creative/technical answer? The user says "You are a critical thinker." Likely they want an explanation of the concept of a language model going to sleep—maybe a metaphorical answer, maybe technical about inference, token generation stopping, etc. Should provide explanation, perhaps talk about model inference, token generation loop, early stopping, temperature, etc. Also perhaps talk about training vs inference, no actual sleep. Provide creative analogy.
-
-We should answer in a thorough way. Should consider the constraints? Nothing explicitly given. So just answer.
-
-Proceed.
