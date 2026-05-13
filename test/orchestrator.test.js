@@ -10,6 +10,9 @@ describe("Orchestrator", () => {
     const stateLog = /** @type {string[]} */ ([]);
     const mockTtsEngine = {
       load: async () => {},
+      startStream: () => {},
+      stop: () => {},
+      destroy: () => {},
     };
     const mockAudioGraph = {
       clearChannels: () => {},
@@ -105,7 +108,8 @@ describe("Orchestrator", () => {
 
     const mockTtsEngine = {
       load: async () => {},
-      openStream: () => ({ sendText: () => {}, close: () => {} }),
+      startStream: () => {},
+      stop: () => {},
       destroy: () => {},
     };
     const mockAudioGraph = {

@@ -7,7 +7,7 @@ import { config } from "./config.js";
 import { createPromptSelector } from "./ui/prompt-selector.js";
 import { createHistory } from "./ui/history.js";
 import { createColumn } from "./ui/column.js";
-import { KyutaiBackend } from "./tts/kyutai-backend.js";
+import { PocketTtsBackend } from "./tts/pocket-tts-backend.js";
 import { AudioGraph } from "./audio/audio-graph.js";
 
 import { Orchestrator } from "./session/orchestrator.js";
@@ -73,12 +73,12 @@ historyBtn.addEventListener("click", () => {
 const audioGraph = new AudioGraph();
 audioGraph.enableTabResume();
 
-// Per-model KyutaiBackend instances (3 WebSocket connections)
+// Per-model PocketTtsBackend instances (one per model)
 const ttsEngines = new Map();
 for (const model of config.models) {
   ttsEngines.set(
     model.name,
-    new KyutaiBackend({ wsUrl: config.tts.wsUrl, modelName: model.name })
+    new PocketTtsBackend({ serverUrl: config.tts.serverUrl, modelName: model.name })
   );
 }
 

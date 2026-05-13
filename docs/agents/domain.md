@@ -26,7 +26,7 @@ Single-context repo:
 │   └── 001-deepen-module-architecture.md
 ├── ui/          (prompt-selector, column, history + CSS)
 ├── session/     (orchestrator, channel-pipeline, storage + adapters)
-├── tts/         (kyutai-backend, tts-engine, text-chunker)
+├── tts/         (pocket-tts-backend, tts-engine, text-chunker)
 ├── audio/       (audio-graph, waveform)
 ├── llm/         (llm-stream, health-check)
 ├── styles/      (global.css, top-bar.css)

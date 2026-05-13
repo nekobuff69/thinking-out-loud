@@ -9,13 +9,13 @@
 | **Curated prompt** | One of five pre-written philosophical questions that frame the artistic theme | Preset, starter, suggested question |
 | **Free-text question** | A user-typed question not from the curated list | Custom prompt, typed input |
 | **Ask** | The user action that starts a session (clicking the Ask button) | Submit, go, start, run |
-| **Loading** | Session state: TTS server connection via WebSocket ping (shows spinner) | Warm-up, setup, preparing |
+| **Loading** | Session state: TTS server connection via HTTP health check (shows spinner) | Warm-up, setup, preparing |
 | **Checking** | Session state: LLM provider health pings (/models). Follows Loading, precedes Thinking. | Probing, pinging, verifying |
 | **Thinking** | Session state: LLM reasoning streams are active and TTS is playing | Streaming, generating, running |
 | **Speaking** | Session state: LLM streams have ended but TTS audio is still playing | Tail, finishing, trailing |
 | **Done** | Session state: all playback complete, session saved, replay available | Finished, complete, ended |
 | **Stop** | User action that soft-stops all pipelines, transitions through Done to Idle. Session can immediately start again. | Cancel, abort, kill, mute |
-| **Soft stop** | Immediate kill: close all TTS streams, kill WebSocket connections, stop audio. Returns app to fresh idle state. | Hard kill, immediate stop |
+| **Soft stop** | Immediate kill: close all TTS streams, kill connections, stop audio. Returns app to fresh idle state. | Hard kill, immediate stop |
 | **Replay** | Re-synthesize TTS audio from a past session's stored reasoning text using the legacy single-shot synthesiz protocol | Playback, listen again, re-listen |
 | **History** | The list of past saved sessions browsable for replay | Archive, past sessions, log |
 
@@ -41,20 +41,14 @@
 | Term | Definition | Aliases to avoid |
 |---|---|---|
 | **TTS** | Text-to-speech: the browser-side synthesis that converts reasoning text into spoken audio | Speech synthesis, voice synthesis, audio generation |
-| **TTS model** | The speech synthesis model. Currently Kyutai DSM (0.75B–1.6B params) served by a local Python+MLX server. Planned replacement: Pocket TTS (100M params, CPU-only, native voice cloning) — see ADR-005 and `docs/tts-technology-evaluation.md`. | Speech engine, voice model, synthesis backend |
-| **TTS protocol** | WebSocket message contract between browser and TTS server: `open_stream` (starts generation for a voice), `text` (appends text chunk), `close_stream` (signals end of text, server drains remaining entries and finishes). Legacy `synthesize` single-shot message exists only for replay. | Wire format, message schema |
-| **TTSGen** | Kyutai MLX class that manages streaming TTS generation. Starts with an empty entry queue; text entries are appended dynamically. Owns its own isolated KV cache bundles (`transformer_cache`, `depformer_cache`) and `Mimi` codec instance — independent per-gen state prevents concurrent multi-voice garbling. Has a `warmed_up` flag (False → True after first non-padding audio frame) used for staggered warmup. | Generator, stream handler |
-| **Entry** | One word to generate, consisting of subword token IDs and the original word text. Created by `script_to_entries()` on the server from incoming text chunks. | Word entry, token entry |
-| **Cooperative stepping** | Server-side generation loop that iterates over all active TTSGens. Cold gens (not yet `warmed_up`) run in an exclusive tight loop until their first audio frame, then graduate to round-robin order — one MLX forward pass per round per gen. All gens share model weights; each has its own KV cache bundles and Mimi codec instance. | Round-robin stepping, fair scheduling, staggered warmup |
-| **Warmup** | The initial ~30 acoustic-delay steps a new TTSGen must complete before producing any audio. During warmup, the gen runs exclusively (no interleaving) via the staggered-warmup mechanism in the stepping loop, bringing first-audio latency down from ~2.5s per voice. The `warmed_up` flag (False on construction, True after first non-padding audio frame) tracks this state. Logged as `WARMUP` events. | Thermal state, acoustic delay, initialization, first audio |
-| **Stream handle** | Client-side object returned by `KyutaiBackend.openStream()`. Has `sendText(text)` to send incremental text and `close()` to signal end of text. One active per model. | Stream object, TTS handle |
-| **Unsent buffer** | Accumulator in the ChannelPipeline that holds text not yet sent to the TTS server. Cleared (drain-on-send) on each word-boundary or timeout flush. | Pending text, text accumulator |
-| **Delta text** | Only the new text since the last send — never the full accumulated text. The server appends entries, not replacing them. | Incremental text, new text |
-| **Voice** | A distinct speaker identity assigned to one model. With Pocket TTS: resolved from a raw WAV sample or pre-exported `.safetensors` voice state via `get_state_for_audio_prompt()`. DSM (current): resolved as a pre-computed speaker embedding from the `kyutai/tts-voices` repo (gated model required for custom voices). | Speaker, persona, voice preset, timbre, voice sample |
-| **Speaker embedding** | A mathematical representation of a speaker's voice characteristics. Pocket TTS format: FlowLM KV cache state derived from Mimi-encoded audio, exportable as `.safetensors`. DSM format: continuous Mimi encoder latent (requires gated `_mimi_voice` model — not publicly available for custom voices). Both stored as `.safetensors` but mutually incompatible. | Voice embedding, voiceprint, conditioning vector |
+| **TTS model** | The speech synthesis model: Pocket TTS (100M params, CPU-only, HTTP server). See `docs/tts-technology-evaluation.md`. | Speech engine, voice model, synthesis backend |
+| **TTS protocol** | HTTP request/response contract between browser and TTS server: `POST /v1/tts` with `{text, voice}` → streaming WAV audio. Legacy synthesize replay path preserved via same endpoint. | Wire format, message schema |
+| **Stream handle** | PocketTtsBackend handles text as complete sentences via `startStream()`. No incremental `sendText`/`close` pattern. | Stream object, TTS handle |
+| **Unsent buffer** | Accumulator in the ChannelPipeline for the replay (`drainText`) path. Live path uses sentence queue via `TextChunker`. | Pending text, text accumulator |
+| **Voice** | A distinct speaker identity assigned to one model. Resolved from a raw WAV sample or pre-exported `.safetensors` voice state via `get_state_for_audio_prompt()`. | Speaker, persona, voice preset, timbre, voice sample |
+| **Speaker embedding** | A mathematical representation of a speaker's voice characteristics. FlowLM KV cache state derived from Mimi-encoded audio, exportable as `.safetensors`. | Voice embedding, voiceprint, conditioning vector |
 | **Voice cloning** | Creating a Voice from a raw audio sample (WAV, MP3). Native in Pocket TTS via `get_state_for_audio_prompt()` — encodes audio through Mimi → FlowLM speaker projection → voice state ready for generation. DSM voice cloning requires a gated model not publicly released (see `docs/tts-technology-evaluation.md`). | Voice creation, voice extraction, speaker enrollment |
-| **PCM chunk** | A single Float32Array audio frame received from the TTS server, played continuously through the AudioContext | Audio frame, PCM buffer, audio segment |
-| **WebSocket (TTS)** | Per-model persistent network connection between browser and TTS server (ws://localhost:8765). Three connections total — one per model. | WS, socket, connection |
+| **PCM chunk** | A single Float32Array audio frame received from Pocket TTS server via HTTP streaming response, played continuously through the AudioContext | Audio frame, PCM buffer, audio segment |
 | **Text chunker** | Word-boundary accumulator in the ChannelPipeline that flushes text on whitespace or sentence-ending punctuation. First chunk also flushes on a 50ms timeout for fast first audio. | Word accumulator, chunk accumulator |
 | **First-audio latency** | Time from first reasoning token arriving to first PCM chunk playing — typically sub-200ms with incremental text feeding | Time-to-first-chunk, TTS startup delay |
 | **AudioContext** | The browser's Web Audio API context managing all audio routing and playback | Audio graph, audio engine, sound system |
@@ -67,7 +61,7 @@
 
 | Term | Definition | Aliases to avoid |
 |---|---|---|
-| **Sequential playback** | TTS voices speak one at a time: voice 1 finishes, then voice 2, then voice 3. All three LLMs reason simultaneously (text visible), only TTS is sequential. Single TTSGen active at a time ensures clean audio quality. | Serial, one-at-a-time, monologue |
+| **Sequential playback** | TTS voices speak one at a time: voice 1 finishes, then voice 2, then voice 3. All three LLMs reason simultaneously (text visible), only TTS is sequential. | Serial, one-at-a-time, monologue |
 
 ## Visual domain
 
@@ -98,9 +92,9 @@
 - Each **Model** produces one stream of **Reasoning** and one **Final answer**
 - The **Final answer** is detected at the **Content boundary** and never spoken or displayed
 - All three **Models** reason simultaneously (text displayed in all columns). TTS plays sequentially: voice 1 → voice 2 → voice 3. Only one pipeline feeds TTS at a time.
-- **Reasoning** tokens accumulate in active pipeline's **Unsent buffer**, then flush as **Delta text** on word boundaries to the **TTS server** via **WebSocket**
-- The **TTS server** appends text chunks as **Entries** to the running **TTSGen**, which generates continuous **PCM chunks** using the model's assigned **Voice**
-- Each **Model** has its own **WebSocket** connection and **TTSGen** instance on the server (3 connections total, one per model)
+- **Reasoning** tokens accumulate in active pipeline's **Unsent buffer**, then flush as complete sentences via **Text chunker** to the **TTS server** via HTTP
+- The **TTS server** receives complete text via `POST /v1/tts` and streams **PCM chunks** using the model's assigned **Voice**
+- Each **Model** has its own HTTP-based TTS pipeline (sequential playback, one active at a time)
 - Each **Model** has one **Channel** in the **AudioContext**, with its own **Panning** position. The channel uses `openStream()` mode for live playback and `playStream()` mode for replay.
 - Each **Channel** has one **AnalyserNode** that drives the **Waveform** in that model's **Column**
 - A **Column** shows the **Display name**, streaming reasoning text, and **Waveform** in the model's **Color**
@@ -113,11 +107,11 @@
 
 > **Dev:** "When the user hits **Ask**, do I start all three **Channels** at once?"
 >
-> **Domain expert:** "Yes — fire all three LLM fetches simultaneously. Each **Model** starts its **Reasoning** stream independently. The reasoning text appears in all three columns at once. TTS plays sequentially: pipeline 1 speaks while pipelines 2 and 3 accumulate text silently. When pipeline 1 finishes, pipeline 2 resumes and sends its full reasoning to TTS, then pipeline 3. This ensures single TTSGen active at a time → clean, stutter-free audio."
+> **Domain expert:** "Yes — fire all three LLM fetches simultaneously. Each **Model** starts its **Reasoning** stream independently. The reasoning text appears in all three columns at once. TTS plays sequentially: pipeline 1 speaks while pipelines 2 and 3 accumulate text silently. When pipeline 1 finishes, pipeline 2 resumes and sends its full reasoning to TTS, then pipeline 3."
 >
 > **Dev:** "And the **TTS model** — does it queue text per **Channel**, or synthesize in some global order?"
 >
-> **Domain expert:** "Per **Channel**. Each **Channel** has its own **WebSocket** connection to the server with its own **TTSGen** instance. At any moment, only one TTSGen is active — the others are idle. When a pipeline resumes, it sends its full accumulated text as a single chunk. The server steps the active gen in a tight loop. **Ducking** is still present for any brief overlap when one voice's tail padding overlaps with the next voice's start."
+> **Domain expert:** "Per **Channel**. Each **Channel** makes its own HTTP request to the TTS server. At any moment, only one pipeline is active — the others are idle. When a pipeline resumes, it sends its full accumulated text as a single POST. The server generates audio and streams back WAV chunks. **Ducking** is still present for any brief overlap when one voice's tail overlaps with the next voice's start."
 >
 > **Dev:** "What happens if a **Model** reaches the **Content boundary** while its **TTS** is still generating audio?"
 >
@@ -126,6 +120,6 @@
 ## Flagged ambiguities
 
 - "**thinking**" was used conversationally to mean both the **Thinking** session state and the act of **Reasoning**. In the domain language, **Thinking** is always a session state; **Reasoning** is the model's output. Say "the session is in Thinking state" not "the model is thinking."
-- "**model**" without qualification is ambiguous — it could mean **LLM** (Qwen, Gemma) or **TTS model** (Kyutai). Always disambiguate: say **Model** for LLMs, **TTS model** for speech synthesis.
+- "**model**" without qualification is ambiguous — it could mean **LLM** (Qwen, Gemma) or **TTS model** (Pocket TTS). Always disambiguate: say **Model** for LLMs, **TTS model** for speech synthesis.
 - "**voice**" was used loosely for both the abstract idea ("giving AI a voice") and the concrete TTS voice preset. Use **Voice** only for the TTS preset. For the abstract idea, say "the model speaks" or "the model's speech." Also ambiguous: a **Voice** may refer to the config value (an embedding name like `alba-mackenna/casual.wav`), the underlying **Speaker embedding** (a `.safetensors` file), or a raw audio sample used for **Voice cloning**. Disambiguate: use **Voice** for the identity, **Speaker embedding** for the data file, **Voice cloning** for the creation process.
 - "**stream**" was used for both the LLM data flow and the audio playback. In the domain language, **Streaming** is always the LLM token flow. For audio, say "playback" or "the **Channel** is active." A **TTS stream** (via **Stream handle**) is the active synthesis session between one pipeline and the server.

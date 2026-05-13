@@ -11,9 +11,9 @@
 - **Runtime:** Browser (ES modules)
 - **Build:** Vite dev server + production bundler
 - **LLM Inference:** OpenAI-compatible local providers (LM Studio, etc.) via `fetch()` + SSE
-- **TTS:** Kyutai DSM TTS via local Python+MLX server (`moshi-mlx`), streamed over WebSocket. Mimi codec, 1.6B params, Apple Silicon optimized. Uses incremental text feeding via `TTSGen` for smooth, low-latency speech. Per-model WebSocket connections (3 total). Server features per-gen state isolation (each TTSGen owns its own KV cache bundles and Mimi codec instance for clean concurrent multi-voice audio) and staggered warmup (cold gens run exclusively until first audio frame).
-- **TTS Protocol:** Streaming protocol (`open_stream` → `text`(×N) → `close_stream`) for live sessions; legacy single-shot `synthesize` protocol preserved for replay.
-- **TTS Reference:** See `docs/adr/004-streaming-tts-protocol.md` for protocol design. Upstream references: [Kyutai TTS blog](https://kyutai.org/blog/2025-07-03-kyutai-tts-1-6b#delayed-streams-modeling), [streaming MLX example](https://github.com/kyutai-labs/delayed-streams-modeling/blob/main/scripts/tts_mlx_streaming.py), [DSM paper](https://arxiv.org/html/2509.08753v2).
+- **TTS:** Pocket TTS (100M params, CPU-only) via local Python server. Streaming WAV audio over HTTP (`POST /v1/tts` with `{text, voice}`). Voice cloning from any WAV file via `get_state_for_audio_prompt()`. Sentence-level text input, ~200ms first-audio latency.
+- **TTS Protocol:** HTTP request/response (`POST /v1/tts` → streaming WAV) for live sessions; legacy single-shot `synthesize` protocol preserved for replay.
+- **TTS Reference:** See ADR-005 (`docs/adr/005-pocket-tts-switch.md`). Upstream: [Pocket TTS](https://github.com/kyutai-labs/pocket-tts), [CALM paper](https://arxiv.org/abs/2509.06926).
 - **Audio:** Web Audio API (AudioContext, GainNode, StereoPannerNode, AnalyserNode)
 - **Storage:** localStorage with adapter seam (in-memory for tests)
 - **Styling:** Separate CSS files in `styles/` and `ui/`, imported as ES modules
@@ -46,19 +46,11 @@ index.html ──► index.js (bootstraps everything)
 │  └── session/memory-storage-adapter.js  Test adapter        │
 ├─────────────────────────────────────────────────────────────┤
 │  TTS Layer (text → audio synthesis + playback)              │
-│  ├── tts/kyutai-backend.js    Per-model WebSocket client    │
-│  ├── tts/tts-engine.js        Streaming interface           │
-│  ├── tts/text-chunker.js      Word-boundary accumulator     │
-│  ├── server/tts-server.py     Legacy single-shot server     │
-│  ├── server/tts-server-streaming.py  Streaming TTSGen server│
-│  │   ├── Per-gen state isolation (#54)                      │
-│  │   │   └── Each TTSGen owns its own KV cache bundles      │
-│  │   │       and Mimi instance; _swap_caches_in() before    │
-│  │   │       each step, padding frames keep codec sync via  │
-│  │   │       per-gen Mimi but discard PCM                   │
-│  │   └── Staggered warmup (#55)                             │
-│  │       └── Cold gens run exclusive until first audio      │
-│  │           frame, then join round-robin cycle             │
+│  ├── tts/pocket-tts-backend.js  HTTP client for Pocket TTS  │
+│  ├── tts/tts-engine.js          Streaming interface          │
+│  ├── tts/text-chunker.js        Sentence-boundary accumulator│
+│  ├── server/tts-server-pocket.py  Pocket TTS HTTP server     │
+│  ├── server/test_server_pocket.py  Server integration tests  │
 ├─────────────────────────────────────────────────────────────┤
 │  Audio Layer (Web Audio routing + visualization)            │
 │  ├── audio/audio-graph.js     AudioContext + channels       │
@@ -92,26 +84,23 @@ index.js ──► orchestrator.start(question)
   │
   ▼
 Orchestrator:
-  1. Ensure TTS server is running (WebSocket ping to streaming server)
+  1. Ensure TTS server is running (HTTP health check to Pocket TTS server)
   2. Health-check all LLM providers (/models ping)
   3. For each reachable model:
-     • Open per-model WebSocket to TTS server (3 connections total)
-     • Create ChannelPipeline (with per-model KyutaiBackend injected)
-     • ChannelPipeline.createChannel() → AudioGraph channel (openStream mode) + waveform
+     • Create ChannelPipeline (with per-model PocketTtsBackend injected)
+     • ChannelPipeline.createChannel() → AudioGraph channel + waveform
      • Pipelines 2 and 3 are paused — only pipeline 1 feeds TTS initially
   4. Fire all LLM streams concurrently via `LLMProvider.streamReasoning()`
      • Tokens → ChannelPipeline.feedToken() → Column.appendToken() all 3 models
-     • Only pipeline 1 feeds TTS: accumulator builds #unsentBuffer, sends incremental
-       text deltas on word boundaries (first chunk: 50ms timeout for fast first audio)
-     • Each text chunk → KyutaiBackend.sendText() → WebSocket text message →
-       server appends entries to TTSGen → generates PCM frames
-     • PCM frames push back over WebSocket → AudioGraph channel.openStream().feed()
-       → AudioBufferSourceNodes → waveform animates
+     • Only pipeline 1 feeds TTS: TextChunker splits reasoning into sentences,
+       each complete sentence sent via HTTP POST to Pocket TTS server
+     • Each sentence → PocketTtsBackend.startStream() → POST /v1/tts →
+       server generates streaming WAV audio
+     • PCM frames stream back over HTTP → AudioGraph channel → waveform animates
      • When pipeline 1's TTS finishes → orchestrator advances to pipeline 2
      • Pipeline 2 resumes → sends full accumulated reasoningText to TTS → speaks
      • Same for pipeline 3
-     • Content boundary / LLM end / token cap → send remaining delta + close stream
-     • Server drains remaining entries + tail padding → sends done
+     • Content boundary / LLM end / token cap → send remaining text + finish
      • State events → EventBus → DebugOverlay (when enabled)
   5. When last pipeline's TTS finishes → save session → Done
 ```
@@ -184,38 +173,28 @@ await provider.streamReasoning(
 
 `llm/llm-stream.js` preserves a backward-compatible `streamReasoning()` wrapper.
 
-### KyutaiBackend (`tts/kyutai-backend.js`)
+### PocketTtsBackend (`tts/pocket-tts-backend.js`)
 
-WebSocket client for the local Python+MLX TTS server. One instance per model (3 total) —
-each owns one WebSocket connection. Stays a dumb protocol pipe: translates method calls
-to JSON messages, routes PCM frames to callbacks. No text processing.
+HTTP client for the local Pocket TTS server. One instance per model (3 total).
+Handles text as complete sentences via `startStream()`. No incremental text feeding
+— sentences are split by TextChunker before reaching the backend.
 
-**Live streaming API (new):**
+**API:**
 ```js
-load() → Promise<void>              // Open WebSocket (idempotent)
-openStream(voice, {onAudioChunk, onDone, onError}) → StreamHandle
-  stream.sendText(text)             // Send text chunk (incremental delta)
-  stream.close()                    // Signal end of text
-destroy()                           // Close WebSocket, prevent reconnect
+load() → Promise<void>              // Verify server reachable (HTTP health check)
+startStream(text, voice, onAudioChunk, {onDone, onError}) → void
+  // Sends POST /v1/tts with {text, voice}, receives streaming WAV
+stop() → void                       // Abort current request
+destroy()                           // Release resources
 ```
 
-- `openStream()` sends `{"type":"open_stream","voice":"..."}`, returns immediately.
-  Only one active stream per backend.
-- `sendText()` sends `{"type":"text","data":"..."}` — appends entries on server.
-- `close()` sends `{"type":"close_stream"}` — server drains remaining entries.
+- `startStream()` sends `POST /v1/tts` with `{text, voice}`, returns immediately.
+  PCM chunks arrive via `onAudioChunk(Float32Array, sampleRate)`.
 - Debug events to EventBus: `tts-connect`, `tts-disconnect`, `tts-first-audio` (ms),
-  `tts-text-sent`, `tts-queue` (entries queued), `tts-done`, `tts-error`, `tts-reconnect`,
-  `tts-text-dropped`.
+  `tts-text-sent`, `tts-done`, `tts-error`.
 
-**Legacy single-shot API (preserved for replay only):**
-```js
-startStream(fullText, voice, onAudioChunk, {onDone, onError}) → void
-stop() → void
-```
-
-Used only by `ChannelPipeline.drainText()`. Sends `{"type":"synthesize",...}` message.
-Compatible with legacy `tts-server.py`.
-
+**Replay path:** Same `startStream()` API, same HTTP endpoint.
+Used by `ChannelPipeline.drainText()`.
 ### SessionStore (`session/storage.js`)
 
 Persistence with adapter seam at construction time.
@@ -325,13 +304,12 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `session/storage.js` | Session persistence with adapter seam | Deep |
 | `session/local-storage-adapter.js` | localStorage wrapper | Shallow |
 | `session/memory-storage-adapter.js` | In-memory adapter for tests | Shallow |
-| `tts/kyutai-backend.js` | Per-model WebSocket client (live streaming + legacy replay API, auto-reconnect, debug events) | Deep |
+| `tts/pocket-tts-backend.js` | HTTP client for Pocket TTS server (live + replay API, debug events) | Deep |
 | `tts/tts-engine.js` | Abstract TTS streaming interface | Shallow (interface) |
-| `tts/text-chunker.js` | Word-boundary accumulator (drain-on-send, first-chunk timeout) | Shallow |
-| `server/tts-server-streaming.py` | Python+MLX streaming server (TTSGen, per-gen state isolation, staggered warmup, cooperative round-robin, new protocol) | Deep |
-| `server/tts-server.py` | Legacy single-shot Python+MLX server (preserved for replay fallback) | Deep |
-| `server/test_server_streaming.py` | Python integration tests for streaming server (7 tests) | Shallow (test) |
-| `server/requirements.txt` | Python server dependencies (moshi-mlx, websockets) | Shallow (config) |
+| `tts/text-chunker.js` | Sentence-boundary accumulator | Shallow |
+| `server/tts-server-pocket.py` | Pocket TTS HTTP server (FastAPI, streaming WAV response, voice cloning) | Deep |
+| `server/test_server_pocket.py` | Python integration tests for Pocket TTS server | Shallow (test) |
+| `server/requirements.txt` | Python server dependencies (pocket-tts, fastapi, uvicorn, numpy, scipy) | Shallow (config) |
 | `audio/audio-graph.js` | Web Audio routing + ducking | Deep |
 | `audio/waveform.js` | Canvas visualization from AnalyserNode | Deep |
 | `llm/llm-stream.js` | Backward-compat wrapper around provider | Shallow |
@@ -371,7 +349,6 @@ npm test
 | `openai-compatible-provider.test.js` | 9 | Separate/tagged/none reasoning formats, URL construction, retry, abort |
 | `orchestrator.test.js` | 3 | stop() → Idle transition, no-save after stop, monologue sequencing |
 | `channel-pipeline.test.js` | 16 | Empty LLM stream detection, TTS streaming path, word-boundary deltas, no-restart guarantee, token cap, content boundary, first-chunk timeout, softStop isolation, reconnect audio recovery, resume after close, replay guard |
-| `kyutai-backend.test.js` | 21 | WebSocket connection, streaming (old + new API), PCM chunk ordering, reconnect + re-subscribe, error handling, reconnect events, drop warnings |
 | `audio-graph-stream.test.js` | 7 | playStream PCM playback, scheduling, ducking, stop; openStream feed/end/stop/ducking |
 | `text-chunker.test.js` | 16 | Punctuation/timeout/max-words flush, no-premature-flush, disabled punctuation
 
@@ -379,7 +356,7 @@ npm test
 
 - `llm/llm-stream.js` — Mock `fetch` with ReadableStream SSE responses
 - `llm/providers/openai-compatible-provider.js` — Mock `fetch` with SSE; test reasoningFormat modes
-- `tts/kyutai-backend.js` — Mock WebSocket server; test chunk delivery and reconnection
+- `tts/pocket-tts-backend.js` — Mock HTTP server; test chunk delivery
 - `session/channel-pipeline.js` — Mock all dependencies
 - `session/storage.js` — Inject MemoryStorageAdapter
 - `session/event-bus.js` — Pure logic, no mocks needed
@@ -390,7 +367,7 @@ npm test
 | Extension | How | Files |
 |---|---|---|
 | New LLM provider | Implement `LLMProvider` interface; update `config.js` | `llm/providers/`, `config.js` |
-| New TTS backend | Extend `TTSEngine` (both live and legacy APIs) | `tts/tts-engine.js`, `tts/kyutai-backend.js` |
+| New TTS backend | Extend `TTSEngine` | `tts/tts-engine.js`, `tts/pocket-tts-backend.js` |
 | New storage backend | Implement adapter interface | `session/storage.js` |
 | IndexedDB storage | New adapter + inject | `session/storage.js` |
 | New playback mode | Add state logic to Orchestrator | `session/orchestrator.js` |
@@ -400,9 +377,9 @@ npm test
 
 | Resource | Link |
 |---|---|
-| Kyutai TTS 1.6B blog post (DSM architecture) | <https://kyutai.org/blog/2025-07-03-kyutai-tts-1-6b#delayed-streams-modeling> |
-| Streaming MLX reference implementation (`TTSGen`) | <https://github.com/kyutai-labs/delayed-streams-modeling/blob/main/scripts/tts_mlx_streaming.py> |
-| DSM research paper | <https://arxiv.org/html/2509.08753v2> |
-| `moshi-mlx` package (installed) | <https://pypi.org/project/moshi-mlx/> |
-| Kyutai TTS voices repo | <https://huggingface.co/kyutai/tts-voices> |
-| Streaming protocol ADR | `docs/adr/004-streaming-tts-protocol.md` |
+| Pocket TTS repository | <https://github.com/kyutai-labs/pocket-tts> |
+| CALM architecture paper | <https://arxiv.org/abs/2509.06926> |
+| Pocket TTS demo | <https://kyutai.org/pocket-tts> |
+| Pocket TTS technical report | <https://kyutai.org/pocket-tts-technical-report> |
+| Pocket TTS switch ADR | `docs/adr/005-pocket-tts-switch.md` |
+| TTS technology evaluation | `docs/tts-technology-evaluation.md` |

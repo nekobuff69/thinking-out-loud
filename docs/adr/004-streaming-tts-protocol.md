@@ -1,8 +1,9 @@
 # ADR-004: Streaming TTS Protocol with Incremental Text Feeding
 
 ## Status
+## Status
 
-Accepted — implemented, May 2026.
+Superseded by ADR-005 (Pocket TTS switch, May 2026).
 
 Implementation completed across 7 slices (#41–#47), plus 4 defect-fix
 slices (#49–#52), plus 2 architectural enhancements (#54–#55) and

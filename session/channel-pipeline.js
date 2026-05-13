@@ -6,7 +6,6 @@
  * @typedef {import("../tts/tts-engine.js").TTSEngine} TTSEngine
  * @typedef {import("../llm/providers/llm-provider.js").LLMProvider} LLMProvider
  * @typedef {import("./event-bus.js").SimpleEventBus} SimpleEventBus
- * @typedef {import("../tts/kyutai-backend.js").StreamHandle} StreamHandle
  */
 
 /**
@@ -26,10 +25,10 @@
  * Owns one model's full pipeline:
  * LLM token → column text → TTS streaming backend → audio channel.
  *
- * Live path (new streaming protocol):
- *   Tokens accumulate in #unsentBuffer. On word boundary, buffer is sent
- *   to the TTS server as incremental delta (drain-on-send). One openStream
- *   call, many sendText calls. No synthesis restart.
+ * Live path (sentence-by-sentence streaming):
+ *   Tokens flow through TextChunker (or word-boundary detection).
+ *   Each sentence is queued and sent as a separate startStream call.
+ *   Sentences play sequentially — next starts after current onDone.
  *
  * Replay path (preserved):
  *   drainText() uses old startStream(fullText) + playStream(streamFn).
@@ -67,8 +66,6 @@ export class ChannelPipeline {
   // Streaming TTS state
   /** @type {string} */
   #unsentBuffer = "";
-  /** @type {StreamHandle | null} */
-  #ttsStream = null;
   /** @type {{ feed: (pcm: Float32Array, sampleRate: number) => void, end: () => void, stop: () => void } | null} */
   #audioStream = null;
   /** @type {boolean} */
@@ -78,11 +75,15 @@ export class ChannelPipeline {
   /** @type {boolean} */
   #isCapped = false;
 
-  // First-chunk 50ms timeout for fast first audio
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  #firstChunkTimer = null;
+
+  /** @type {string} */
+  #liveBuffer = "";
+  // Sentence queue for sentence-by-sentence TTS streaming
+  /** @type {string[]} */
+  #sentenceQueue = [];
   /** @type {boolean} */
-  #firstChunkSent = false;
+  #currentSentenceActive = false;
+
 
   // Pause/resume for monologue
   /** @type {boolean} */
@@ -91,7 +92,6 @@ export class ChannelPipeline {
   // Replay synthesis guard — prevents double invocation of #synthesizeReplay
   /** @type {boolean} */
   #replaySynthesisActive = false;
-
   /** @type {(() => void) | null} */
   #reconnectUnsub = null;
 
@@ -140,11 +140,10 @@ export class ChannelPipeline {
     this.#isCapped = false;
     this.#wordCount = 0;
     this.#unsentBuffer = "";
-    this.#ttsStream = null;
     this.#audioStream = null;
     this.#ttsStreamOpened = false;
-    this.#firstChunkTimer = null;
-    this.#firstChunkSent = false;
+    this.#sentenceQueue = [];
+    this.#currentSentenceActive = false;
     // Preserve #paused state — orchestrator may have paused this pipeline
     // before startStream is called (monologue mode). Resetting to false
     // would un-pause pipelines that should stay silent until resumed.
@@ -169,7 +168,7 @@ export class ChannelPipeline {
         },
         onDone: () => {
           this.#streamActive = false;
-          // Send remaining delta + close stream
+          // Flush remaining text and finalize TTS
           this.#flushAndClose();
           if (this.#reasoningText.length === 0) {
             this.setError("No reasoning received");
@@ -201,7 +200,14 @@ export class ChannelPipeline {
 
     if (!this.#contentHit && !this.#isCapped && !this.#paused) {
       if (this.#textChunker) {
-        this.#textChunker.feed(token);
+        // Token cap check
+        this.#wordCount = this.#reasoningText.split(/\s+/).filter(Boolean).length;
+        if (this.#wordCount >= this.#ttsConfig.maxTokens) {
+          this.#isCapped = true;
+          this.#flushAndClose();
+        } else {
+          this.#textChunker.feed(token);
+        }
       } else {
         this.#feedTts(token);
       }
@@ -210,8 +216,8 @@ export class ChannelPipeline {
   }
 
   /**
-   * Feed text into the streaming TTS buffer.
-   * Accumulates in #unsentBuffer, flushes on word boundary.
+   * Feed text into the TTS pipeline (non-TextChunker path).
+   * Accumulates in #liveBuffer, flushes on sentence-ending punctuation.
    * @param {string} text
    */
   #feedTts(text) {
@@ -228,31 +234,29 @@ export class ChannelPipeline {
     // Ensure stream is opened
     this.#ensureTtsStream();
 
-    // Accumulate
-    this.#unsentBuffer += text;
+    // Accumulate in live buffer (not #unsentBuffer, which is for replay)
+    this.#liveBuffer += text;
 
-    // Flush on word boundary (whitespace or sentence-ending punctuation)
-    if (this.#hasWordBoundary(this.#unsentBuffer)) {
-      this.#flushBuffer();
+    // Flush on sentence-ending punctuation
+    if (this.#isSentenceBoundary(this.#liveBuffer)) {
+      const sentence = this.#liveBuffer.trim();
+      this.#liveBuffer = "";
+      if (sentence.length > 0) {
+        this.#sentenceQueue.push(sentence);
+        this.#sendNextSentence();
+      }
     }
   }
 
   /**
-   * Open the TTS streaming session on first text.
+   * Open audio channel for TTS playback.
+   * TextChunker handles chunk timing (150ms timeout, punctuation, max words).
    */
   #ensureTtsStream() {
     if (this.#ttsStreamOpened) return;
     if (!this.#channel) return;
 
     this.#ttsStreamOpened = true;
-
-    // Start 50ms first-chunk timeout for fast first audio
-    this.#firstChunkTimer = setTimeout(() => {
-      this.#firstChunkTimer = null;
-      if (!this.#firstChunkSent && this.#unsentBuffer.length > 0) {
-        this.#flushBuffer();
-      }
-    }, 50);
 
     // Open audio stream channel
     this.#audioStream = this.#channel.openStream();
@@ -266,58 +270,73 @@ export class ChannelPipeline {
       });
     }
 
-    // Open TTS backend stream
-    const handle = /** @type {import("../tts/kyutai-backend.js").KyutaiBackend} */ (this.#ttsEngine)
-      .openStream(this.#model.voice, {
-        onAudioChunk: (pcm, sampleRate) => {
-          this.#audioStream?.feed(pcm, sampleRate);
-        },
-        onDone: () => {
-          this.#audioStream?.end();
-          this.#ttsActive = false;
-          this.#emitProgress("done");
-          this.#onIdle?.();
-        },
-        onError: (msg) => {
-          this.setError(msg);
-        },
-      });
 
-    this.#ttsStream = handle;
     this.#ttsActive = true;
     this.#emitProgress("tts-streaming");
   }
 
   /**
-   * Flush unsent buffer to TTS server as incremental delta.
+   * Send the next sentence from the queue to the TTS engine.
+   * Ensures sequential playback: next sentence starts only after current finishes.
+   * @returns {void}
    */
-  #flushBuffer() {
-    if (this.#unsentBuffer.length === 0) return;
+  #sendNextSentence() {
+    if (this.#currentSentenceActive) return;
+    if (this.#sentenceQueue.length === 0) {
+      // Queue empty. If LLM stream is done and TTS is still active, end audio.
+      if (!this.#streamActive && this.#ttsActive) {
+        this.#audioStream?.end();
+        this.#ttsActive = false;
+        this.#emitProgress("done");
+        this.#onIdle?.();
+      }
+      return;
+    }
+
+    const sentenceText = /** @type {string} */ (this.#sentenceQueue.shift());
+    this.#currentSentenceActive = true;
     this.#ensureTtsStream();
 
-    // Cancel first-chunk timeout when we flush
-    if (this.#firstChunkTimer) {
-      clearTimeout(this.#firstChunkTimer);
-      this.#firstChunkTimer = null;
-    }
-    this.#firstChunkSent = true;
-
-    const delta = this.#unsentBuffer;
-    this.#unsentBuffer = "";
-    this.#ttsStream?.sendText(delta);
-    this.#eventBus?.emit("tts-text-sent", {
-      modelName: this.#model.name,
-      chars: delta.length,
-      words: delta.split(/\s+/).filter(Boolean).length,
-    });
+    this.#ttsEngine.startStream(
+      sentenceText,
+      this.#model.voice,
+      (pcm, sampleRate) => {
+        this.#audioStream?.feed(pcm, sampleRate);
+      },
+      {
+        onDone: () => {
+          this.#currentSentenceActive = false;
+          this.#sendNextSentence();
+        },
+        onError: (msg) => {
+          this.#currentSentenceActive = false;
+          this.setError(msg);
+          this.#sendNextSentence();
+        },
+      }
+    );
   }
 
   /**
-   * Flush remaining buffer and close the stream.
+   * Flush remaining buffer and prepare for stream close.
+   * TextChunker path: flushes any pending text (triggers onFlush → queue).
+   * Non-chunker path: pushes accumulated live buffer to sentence queue.
+   * Always calls #sendNextSentence to handle finalization when queue is empty.
    */
+
   #flushAndClose() {
-    this.#flushBuffer();
-    this.#ttsStream?.close();
+    if (this.#textChunker) {
+      // TextChunker handles its own buffering — flush any pending text
+      this.#textChunker.flush();
+    } else {
+      // Non-chunker path: push any remaining live buffer to sentence queue
+      if (this.#liveBuffer && this.#liveBuffer.trim().length > 0) {
+        this.#sentenceQueue.push(this.#liveBuffer.trim());
+        this.#liveBuffer = "";
+      }
+    }
+    // Check if queue is empty → finalize audio (end stream, emit done, call onIdle)
+    this.#sendNextSentence();
     this.#ttsStreamOpened = false;
   }
 
@@ -333,6 +352,23 @@ export class ChannelPipeline {
     return (
       last === " " ||
       last === "\n" ||
+      last === "." ||
+      last === "!" ||
+      last === "?" ||
+      last === ";"
+    );
+  }
+
+  /**
+   * Check whether the buffered text ends at a sentence boundary (punctuation).
+   * @param {string} text
+   * @returns {boolean}
+   */
+  #isSentenceBoundary(text) {
+    const trimmed = text.trimEnd();
+    if (trimmed.length === 0) return false;
+    const last = trimmed[trimmed.length - 1];
+    return (
       last === "." ||
       last === "!" ||
       last === "?" ||
@@ -356,11 +392,8 @@ export class ChannelPipeline {
     this.#isCapped = false;
     this.#wordCount = 0;
     this.#unsentBuffer = "";
-    this.#ttsStream = null;
     this.#audioStream = null;
     this.#ttsStreamOpened = false;
-    this.#firstChunkTimer = null;
-    this.#firstChunkSent = false;
     this.#paused = false;
 
     // Feed text token-by-token with visual delay, same TTS path as live
@@ -440,26 +473,23 @@ export class ChannelPipeline {
   // ------------------------------------------------------------------
 
   /**
-   * Soft stop: abort LLM stream, close TTS stream, destroy backend, stop audio.
+   * Soft stop: abort LLM stream, stop TTS, clear sentence queue, stop audio.
    */
   softStop() {
     this.#abortController?.abort();
 
-    // Close streaming TTS session (close stream handle, stop audio, null refs)
-    // Do NOT destroy the backend — orchestrator owns backend lifecycle.
-    this.#ttsStream?.close();
+    // Stop in-flight TTS and clear sentence queue
+    this.#ttsEngine.stop();
+    this.#sentenceQueue.length = 0;
+    this.#currentSentenceActive = false;
     this.#audioStream?.stop();
 
-    if (this.#firstChunkTimer) {
-      clearTimeout(this.#firstChunkTimer);
-      this.#firstChunkTimer = null;
-    }
     this.#cleanupReconnectListener();
     this.#ttsActive = false;
-    this.#ttsStream = null;
     this.#audioStream = null;
     this.#ttsStreamOpened = false;
     this.#unsentBuffer = "";
+    this.#liveBuffer = "";
   }
 
   /**
@@ -472,43 +502,35 @@ export class ChannelPipeline {
 
   /**
    * Resume sending text to TTS.
-   * Re-feeds all accumulated reasoning text through TTS since
-   * the pipeline was paused (tokens went to #reasoningText but
-   * not to #unsentBuffer while paused).
+   * Re-feeds all accumulated reasoning text through the pipeline.
+   * Clears any in-flight TTS and sentence queue, then re-chunks
+   * the full reasoning text through TextChunker (or sends as one chunk
+   * in non-chunker path).
    */
+
   resume() {
     this.#paused = false;
-
-    // While paused, feedToken() accumulated text in #reasoningText
-    // but skipped #feedTts (and therefore #unsentBuffer). On resume,
-    // send the full reasoning text to TTS as a single chunk.
-    //
-    // contentHit flag is ignored here — it fired during the LLM stream
-    // (which completed while paused). The TTS stream was never opened
-    // during the original contentHit, so we open a fresh one now.
-
-    // Reset contentHit so #ensureTtsStream doesn't think the stream
-    // was already closed by a prior setContentHit call.
     this.#contentHit = false;
     this.#ttsStreamOpened = false;
 
+    // Stop any in-flight TTS and clear sentence queue
+    this.#ttsEngine.stop();
+    this.#sentenceQueue.length = 0;
+    this.#currentSentenceActive = false;
+
     this.#ensureTtsStream();
 
-    if (this.#reasoningText.length > 0 && this.#ttsStream && !this.#isCapped) {
-      this.#ttsStream.sendText(this.#reasoningText);
-      this.#eventBus?.emit("tts-text-sent", {
-        modelName: this.#model.name,
-        chars: this.#reasoningText.length,
-        words: this.#reasoningText.split(/\s+/).filter(Boolean).length,
-      });
-      // Close stream after sending full text — no more tokens coming
-      this.#ttsStream.close();
-      this.#ttsStreamOpened = false;
-    }
-
-    // Also flush any pending unsentBuffer (may be empty, but check anyway)
-    if (this.#unsentBuffer.length > 0) {
-      this.#flushBuffer();
+    if (this.#reasoningText.length > 0 && !this.#isCapped) {
+      if (this.#textChunker) {
+        // Re-feed full reasoning text through TextChunker for sentence segmentation
+        this.#textChunker.reset();
+        this.#textChunker.feed(this.#reasoningText);
+        this.#textChunker.flush();
+      } else {
+        // Non-chunker path: send full reasoning text as one chunk
+        this.#sentenceQueue.push(this.#reasoningText);
+        this.#sendNextSentence();
+      }
     }
   }
 
@@ -540,7 +562,7 @@ export class ChannelPipeline {
     return this.#model.name;
   }
 
-  /** Mark content boundary reached. Flush buffer and close stream. */
+  /** Mark content boundary reached. Flush pending text and stop feeding TTS. */
   setContentHit() {
     this.#contentHit = true;
     this.#flushAndClose();
@@ -569,9 +591,14 @@ export class ChannelPipeline {
 
   /**
    * Public flush callable by TextChunker's onFlush callback.
+   * Receives the flushed sentence text and queues it for TTS.
+   * @param {string} text
    */
-  flushTts() {
-    this.#flushBuffer();
+  flushTts(text) {
+    if (text && text.trim().length > 0) {
+      this.#sentenceQueue.push(text.trim());
+      this.#sendNextSentence();
+    }
   }
 
   // ------------------------------------------------------------------

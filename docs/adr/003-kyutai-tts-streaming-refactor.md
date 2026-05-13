@@ -1,8 +1,9 @@
 # ADR-003: Replace Kokoro with Kyutai TTS via Local MLX Server
 
 ## Status
+## Status
 
-Accepted — implemented, May 2026.
+Superseded by ADR-005 (Pocket TTS switch, May 2026).
 
 Implementation completed across 5 slices (#35–#39):
 1. `server/tts-server.py` — Python+MLX WebSocket server with Mimi codec

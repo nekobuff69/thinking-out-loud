@@ -10,9 +10,10 @@
  * @property {string} reasoningFormat
  */
 
+
 /**
  * @typedef {Object} TTSConfig
- * @property {string} wsUrl - WebSocket URL for Kyutai TTS server
+ * @property {string} serverUrl - HTTP URL for Pocket TTS server
  * @property {number} maxTokens - Soft token cap for reasoning text
  * @property {number} sentenceTimeoutTokens - Force-flush threshold per sentence (default: 60)
  * @property {boolean} useTextChunker - Enable optional TextChunker for prosody tuning (default: false)
@@ -71,10 +72,10 @@ export const config = {
 	],
 
 	tts: {
-		wsUrl: "ws://localhost:8765",
+		serverUrl: "http://localhost:8765",
 		maxTokens: 200,
 		sentenceTimeoutTokens: 60,
-		useTextChunker: false,
+		useTextChunker: true,
 	},
 
 	systemPrompt:

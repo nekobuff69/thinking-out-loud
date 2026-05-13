@@ -48,12 +48,12 @@ Each model gets its own card showing pipeline internals.
 
 ### Connection line
 
-Maps to `tts-connect` / `tts-disconnect` events from `KyutaiBackend`.
+Maps to `tts-connect` / `tts-disconnect` events from `PocketTtsBackend`.
 
 | Display | Meaning |
 |---|---|
-| `● connected` | WebSocket to TTS server is open |
-| `✗ disconnected` | WebSocket closed or failed |
+| `● connected` | HTTPS connection to TTS server is healthy |
+| `✗ disconnected` | Connection failed or server unreachable |
 
 ### Progress line
 
@@ -68,7 +68,7 @@ Maps to `pipeline-progress` events from `ChannelPipeline`.
 
 ### TTS Latency line
 
-Maps to `tts-first-audio` event from `KyutaiBackend`.
+Maps to `tts-first-audio` event from `PocketTtsBackend`.
 
 | Display | Meaning |
 |---|---|
@@ -77,7 +77,7 @@ Maps to `tts-first-audio` event from `KyutaiBackend`.
 
 ### Speaking line
 
-Maps to `tts-text-sent` event from `KyutaiBackend`.
+Maps to `tts-text-sent` event from `PocketTtsBackend`.
 
 | Display | Meaning |
 |---|---|
@@ -86,16 +86,16 @@ Maps to `tts-text-sent` event from `KyutaiBackend`.
 
 ### Queue line
 
-Maps to `tts-queue` event from `KyutaiBackend`.
+Maps to `tts-queue` event from `PocketTtsBackend`.
 
 | Display | Meaning |
 |---|---|
-| `3 queued` | 3 word entries waiting to be spoken |
+| `3 queued` | 3 sentences waiting to be spoken |
 | `0 queued` | Server has no backlog — text is keeping up |
 
 ### Done line
 
-Maps to `tts-done` event from `KyutaiBackend`. Shows when the speaker has finished.
+Maps to `tts-done` event from `PocketTtsBackend`. Shows when the speaker has finished.
 
 | Display | Meaning |
 |---|---|
@@ -104,7 +104,7 @@ Maps to `tts-done` event from `KyutaiBackend`. Shows when the speaker has finish
 
 ### Errors line
 
-Maps to `tts-error` events from `KyutaiBackend` and `pipeline-error` events from `ChannelPipeline`. Shows timestamped error messages (last 5).
+Maps to `tts-error` events from `PocketTtsBackend` and `pipeline-error` events from `ChannelPipeline`. Shows timestamped error messages (last 5).
 
 ```
 [12:34:56] Error: connection refused
@@ -131,11 +131,11 @@ All done     ● connected   🔇 Finished      ⚡ 180ms   0 queued ✓ done
 
 ### Interpretation Tips
 
-- **Healthy stream:** `● connected`, `⚡` under 500ms, `queued` count stable, `sent` text climbing
-- **Slow TTS:** `queued` growing — server may be CPU-bound, try `--quantize 8`
+- **Healthy stream:** `● connected`, `⚡` under 500ms, `sent` text climbing
+- **Slow TTS:** `queued` growing — server may be CPU-bound, check system load
 - **No audio:** `⚡` stays `—`, `sent` shows nothing — TTS server may be unreachable
-- **Stuck:** `queued` at 0 but not `✓ done` — stream may have stalled without closing
-- **Capped:** Text stops sending but synthesis continues for already-queued entries
+- **Stuck:** Stream may have stalled without completing
+- **Capped:** Text stops sending but audio continues for already-sent text
 
 ---
 
@@ -162,22 +162,22 @@ Emitted by `ChannelPipeline.feedToken()` for every LLM token.
 ```
 
 ### `tts-connect`
-Emitted by `KyutaiBackend` when WebSocket connects.
+Emitted by `PocketTtsBackend` when connection is established.
 
 ```js
 { modelName: "Qwen" }
 ```
 
 ### `tts-disconnect`
-Emitted by `KyutaiBackend` when WebSocket disconnects.
+Emitted by `PocketTtsBackend` when connection drops.
 
 ```js
 { modelName: "Qwen" }
 ```
 
 ### `tts-reconnect`
-Emitted by `KyutaiBackend` after WebSocket reconnects and resubscribes the
-active stream session. Pipeline re-creates the audio stream handle in
+Emitted by `PocketTtsBackend` after connection is restored and the active
+stream is re-established. Pipeline re-creates the audio stream handle in
 response.
 
 ```js
@@ -185,13 +185,13 @@ response.
 ```
 
 ### `tts-first-audio`
-Emitted by `KyutaiBackend` when the first PCM frame arrives from the server.
+Emitted by `PocketTtsBackend` when the first PCM frame arrives from the server.
 
 ```js
 { modelName: "Qwen", latencyMs: 180 }
 ```
 
-- `latencyMs` — time from `openStream()` to first PCM chunk received
+- `latencyMs` — time from `startStream()` to first PCM chunk received
 
 ### `tts-text-sent`
 Emitted by `ChannelPipeline` when a text chunk is flushed to the server.
@@ -204,38 +204,37 @@ Emitted by `ChannelPipeline` when a text chunk is flushed to the server.
 - `words` — approximate word count sent
 
 ### `tts-text-dropped`
-Emitted by `KyutaiBackend` when `sendText()` or `close()` is called on an
-already-closed stream. Text is silently lost; this event makes the loss
+Emitted by `PocketTtsBackend` when text is sent on an already-completed
+stream. Text is silently lost; this event makes the loss
 observable.
 
 ```js
-{ modelName: "Qwen", reason: "sendText after stream closed", chars: 12 }
+{ modelName: "Qwen", reason: "text sent after stream closed", chars: 12 }
 ```
 
 - `reason` — why the text was dropped
-- `chars` — character count of dropped text (0 for close())
+- `chars` — character count of dropped text
 
 Falls back to `console.warn` when no event bus is configured.
 
 ### `tts-queue`
-Emitted by `KyutaiBackend` when the server reports how many entries are queued.
+Emitted by `PocketTtsBackend` when the server reports queue depth.
 
 ```js
 { modelName: "Qwen", count: 3 }
 ```
 
-- `count` — number of word entries waiting to be spoken
+- `count` — number of sentences waiting to be spoken
 
 ### `tts-done`
-Emitted by `KyutaiBackend` when the server finishes generating all audio.
+Emitted by `PocketTtsBackend` when the server finishes generating all audio.
 
 ```js
 { modelName: "Qwen" }
 ```
 
 ### `tts-error`
-Emitted by `KyutaiBackend` when the server reports an error, or on
-reconnect when a synthesize stream has no text to resubmit.
+Emitted by `PocketTtsBackend` when the server reports an error.
 
 ```js
 { modelName: "Qwen", message: "invalid voice" }

@@ -1,4 +1,5 @@
-moshi-mlx>=0.3.0
-websockets>=13.0
+pocket-tts
 numpy>=1.24,<2.3
-mlx>=0.26.0,<0.27
+scipy
+fastapi
+uvicorn

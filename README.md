@@ -134,7 +134,7 @@ This enables sub-200ms first-audio latency. A legacy single-shot `{"type":"synth
 ├──────────────────────────────────────────────────────┤
 │  TTS Layer (text → audio streaming)                  │
 │  tts-engine (abstract streaming interface)           │
-│  kyutai-backend (WebSocket → MLX server)             │
+│  pocket-tts-backend (HTTP → Pocket TTS server)       │
 │  text-chunker (optional prosody tuner, default: off) │
 ├──────────────────────────────────────────────────────┤
 │  Audio Layer (Web Audio API + visualization)         │
@@ -185,15 +185,13 @@ The `Orchestrator` drives a session through: `Idle → Loading → Checking → 
 | `llm/providers/llm-provider.js` | Abstract `LLMProvider` interface |
 | `llm/providers/openai-compatible-provider.js` | OpenAI-compatible SSE implementation with `<think>` tag parsing |
 | `tts/tts-engine.js` | Abstract `TTSEngine` streaming interface (`load`, `startStream`, `stop`, `destroy`) |
-| `tts/kyutai-backend.js` | WebSocket client for Kyutai TTS server (auto-reconnect, both streaming + legacy protocols) |
-| `tts/text-chunker.js` | Optional word accumulator for prosody tuning (punctuation/timeout/max-words flush) |
+| `tts/pocket-tts-backend.js` | HTTP client for Pocket TTS server (sentence-level, streaming WAV) |
+| `tts/text-chunker.js` | Sentence-boundary accumulator for live TTS path |
 | `audio/audio-graph.js` | Web Audio routing + ducking + streaming PCM playback |
 | `audio/waveform.js` | Canvas visualization from AnalyserNode (active bars + idle breathing) |
-| `server/tts-server-streaming.py` | Python+MLX streaming WebSocket server (TTSGen pattern, incremental text) |
-| `server/tts-server.py` | Python+MLX legacy single-shot WebSocket server (replay fallback) |
-| `server/test_server_streaming.py` | Integration tests for the streaming TTS server (6 tests) |
-| `server/test_server.py` | Integration tests for the legacy TTS server (4 tests) |
-| `test/` | Node test runner suites (108 tests, 17 suites) |
+| `server/tts-server-pocket.py` | Pocket TTS HTTP server (FastAPI, streaming WAV, voice cloning) |
+| `server/test_server_pocket.py` | Integration tests for the Pocket TTS server |
+| `test/` | Node test runner suites |
 | `docs/debug-overlay-reference.md` | Full debug overlay specification + event bus reference |
 | `docs/adr/` | Architectural Decision Records (4 ADRs) |
 | `getReasoningContent.js` | CLI helper: streams reasoning from an LLM endpoint |

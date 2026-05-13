@@ -124,7 +124,7 @@ export class Orchestrator {
         [...this.#ttsEngines.values()].map((e) => e.load())
       );
     } catch (err) {
-      this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.wsUrl || "ws://localhost:8765"}`);
+      this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.serverUrl || "http://localhost:8765"}`);
       return;
     }
     this.#activeSessions.clear();
@@ -210,7 +210,7 @@ export class Orchestrator {
         [...this.#ttsEngines.values()].map((e) => e.load())
       );
     } catch (err) {
-      this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.wsUrl || "ws://localhost:8765"}`);
+      this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.serverUrl || "http://localhost:8765"}`);
       return;
     }
     this.#activeSessions.clear();
@@ -298,7 +298,7 @@ export class Orchestrator {
           maxWords: 8,
           timeoutMs: 150,
           flushOnPunctuation: true,
-          onFlush: () => pipeline.flushTts(),
+          onFlush: (text) => pipeline.flushTts(text),
         });
         pipeline.setTextChunker(chunker);
       }

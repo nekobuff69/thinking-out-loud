@@ -3,7 +3,7 @@
  *
  * Push-based: text is sent to the backend, PCM audio chunks arrive via callback.
  *
- * Concrete backends (KyutaiBackend) extend this class.
+ * Concrete backends (PocketTtsBackend) extend this class.
  */
 export class TTSEngine {
   /**

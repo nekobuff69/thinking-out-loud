@@ -1,8 +1,9 @@
 # ADR-005: Switch from Kyutai DSM to Pocket TTS
 
 ## Status
+## Status
 
-Proposed — May 2026. Decision to switch TTS backend from Kyutai DSM (moshi-mlx) to Pocket TTS.
+Accepted — implemented, May 2026. DSM code removed, Pocket TTS server + client deployed.
 
 ## Context
 

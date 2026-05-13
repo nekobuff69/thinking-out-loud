@@ -1,3 +1,5 @@
+> **Update May 2026:** Switch implemented. See ADR-005 and issues #62–#67.
+
 # TTS Technology Evaluation: Pocket TTS vs DSM
 
 2026-05-12 — Research note. Compare Kyutai Pocket TTS to current DSM TTS stack.
