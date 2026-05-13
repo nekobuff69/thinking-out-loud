@@ -21,12 +21,19 @@ import traceback
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 SAMPLE_RATE = 24000
-DEFAULT_VOICE = "default"
+CATALOG_VOICES = [
+    "cosette", "marius", "javert", "alba", "jean", "anna", "vera",
+    "fantine", "charles", "paul", "eponine", "azelma", "george",
+    "mary", "jane", "michael", "eve", "bill_boerst", "peter_yearsley",
+    "stuart_bell", "caro_davy", "giovanni", "lola", "juergen",
+    "rafael", "estelle",
+]
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -46,8 +53,33 @@ def log(label: str, msg: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _flatten_state(voice_state: dict) -> dict:
+    """Flatten nested {layer: {param: Tensor}} → {layer.param: Tensor}."""
+    flat = {}
+    for layer_key, params in voice_state.items():
+        if isinstance(params, dict):
+            for param_key, tensor in params.items():
+                flat[f"{layer_key}.{param_key}"] = tensor
+        else:
+            flat[layer_key] = params
+    return flat
+
+
+def _unflatten_state(flat: dict) -> dict:
+    """Reverse of _flatten_state."""
+    nested = {}
+    for flat_key, tensor in flat.items():
+        parts = flat_key.split(".", 1)
+        if len(parts) == 2:
+            layer_key, param_key = parts
+            nested.setdefault(layer_key, {})[param_key] = tensor
+        else:
+            nested[flat_key] = tensor
+    return nested
+
+
 def _save_safetensors(voice_state, path: str) -> None:
-    """Save voice state to .safetensors file."""
+    """Save voice state to .safetensors file. Flattens nested dict."""
     try:
         import safetensors.torch
     except ImportError:
@@ -55,7 +87,8 @@ def _save_safetensors(voice_state, path: str) -> None:
         return
     try:
         if isinstance(voice_state, dict):
-            safetensors.torch.save_file(voice_state, path)
+            flat = _flatten_state(voice_state)
+            safetensors.torch.save_file(flat, path)
         else:
             safetensors.torch.save_file({"voice_state": voice_state}, path)
     except Exception as exc:
@@ -63,10 +96,12 @@ def _save_safetensors(voice_state, path: str) -> None:
 
 
 def _load_safetensors(path: str):
-    """Load voice state from .safetensors file. Returns the unwrapped tensor
-    if it was saved as a single-tensor dict."""
+    """Load voice state from .safetensors file. Unflattens if needed."""
     import safetensors.torch
     state = safetensors.torch.load_file(path)
+    # Detect if this is a flat-saved voice state (keys contain '.')
+    if any("." in k for k in state.keys()):
+        return _unflatten_state(state)
     if len(state) == 1 and "voice_state" in state:
         return state["voice_state"]
     return state
@@ -147,7 +182,8 @@ def _make_wav_header(data_size: int, sample_rate: int = SAMPLE_RATE,
     buf = io.BytesIO()
     # RIFF chunk descriptor
     buf.write(b"RIFF")
-    buf.write(struct.pack("<I", 36 + data_size))
+    riff_size = min(36 + data_size, 0xFFFFFFFF)
+    buf.write(struct.pack("<I", riff_size))
     buf.write(b"WAVE")
     # fmt sub-chunk (IEEE float32)
     buf.write(b"fmt ")
@@ -175,9 +211,9 @@ def wav_stream(tts_model, text: str, voice_state):
     header = _make_wav_header(0xFFFFFFFF, SAMPLE_RATE)
     yield header
 
-    for chunk in tts_model.generate_audio_stream(text, voice_state=voice_state):
-        # chunk is a float32 numpy array, shape (N,) mono 24 kHz
-        yield chunk.astype(np.float32).tobytes()
+    for chunk in tts_model.generate_audio_stream(voice_state, text):
+        # chunk is a float32 tensor, shape (N,) mono 24 kHz
+        yield chunk.cpu().numpy().tobytes()
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +231,14 @@ class TTSRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="Pocket TTS Server")
+
+# Allow browser access from Vite dev server (localhost:5173)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(RequestValidationError)
@@ -275,31 +319,42 @@ def main() -> None:
 
     # --- load Pocket TTS model ---
     try:
-        from pocket_tts import TTS
+        from pocket_tts import TTSModel
         log("INIT", "Loading Pocket TTS model …")
-        _pocket_tts = TTS()
+        _pocket_tts = TTSModel.load_model()
         log("INIT", "Pocket TTS model loaded")
     except Exception as exc:
         log("FATAL", f"Failed to load Pocket TTS model: {exc}")
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
-    # --- load voices from WAV files ---
-    _voices = load_voices(_pocket_tts, voices_dir)
 
-    # --- built-in default voice as fallback ---
-    if DEFAULT_VOICE not in _voices:
+    # --- load catalog voices (no voice cloning needed) ---
+    _voices = {}
+    log("INIT", f"Loading {len(CATALOG_VOICES)} catalog voices …")
+    catalog_ok = 0
+    for name in CATALOG_VOICES:
         try:
-            voice_state = _pocket_tts.get_state_for_audio_prompt()
-            _voices[DEFAULT_VOICE] = voice_state
-            log("INIT", "Built-in default voice loaded")
-        except (TypeError, AttributeError) as exc:
-            log("WARN", f"No built-in default voice: {exc}")
+            _voices[name] = _pocket_tts.get_state_for_audio_prompt(name)
+            catalog_ok += 1
+        except Exception as exc:
+            log("WARN", f"Catalog voice '{name}' failed: {exc}")
+    log("INIT", f"Loaded {catalog_ok}/{len(CATALOG_VOICES)} catalog voices")
+
+    # --- load custom voices from WAV files (needs voice cloning) ---
+    has_vc = getattr(_pocket_tts, "has_voice_cloning", False)
+    if has_vc:
+        log("INIT", "Voice cloning available, scanning WAV files …")
+        custom_voices = load_voices(_pocket_tts, voices_dir)
+        for name, state in custom_voices.items():
+            if name not in _voices:
+                _voices[name] = state
+    else:
+        log("INIT", "Voice cloning not available (HF auth needed). "
+            "Catalog voices only. See https://huggingface.co/kyutai/pocket-tts")
 
     if not _voices:
-        log("FATAL",
-            "No voices available. Place .wav files in the voices/ directory "
-            "or use --voices-dir to specify an alternate location.")
+        log("FATAL", "No voices available.")
         sys.exit(1)
 
     log("INIT", f"Available voices: {sorted(_voices.keys())}")

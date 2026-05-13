@@ -337,7 +337,6 @@ export class ChannelPipeline {
     }
     // Check if queue is empty → finalize audio (end stream, emit done, call onIdle)
     this.#sendNextSentence();
-    this.#ttsStreamOpened = false;
   }
 
   /**
