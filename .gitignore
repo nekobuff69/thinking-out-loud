@@ -9,3 +9,5 @@ dev-note-dont-read.md
 
 
 /dist
+server.log
+voices/
