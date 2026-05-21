@@ -68,7 +68,7 @@ export const config = {
       provider: "lm-studio",
       url: "http://localhost:1234/v1",
       model: "gpt-oss-20b",
-      voice: "alba",
+      voice: "jane",
       color: "#44aaff",
       pan: 0.5,
       reasoningFormat: "separate",
@@ -78,11 +78,11 @@ export const config = {
   tts: {
     serverUrl: "http://localhost:8080", // Pocket TTS server
     maxTokens: 200, // soft token cap per LLM stream
-    sentenceTimeoutTokens: 60, // force-flush threshold per sentence
+    sentenceTimeoutTokens: 200, // force-flush threshold per sentence
     useTextChunker: true, // enable chunker for prosody tuning
-    chunkerMaxWords: 15, // words in buffer before force-flush
-    chunkerTimeoutMs: 2000, // ms of silence before flushing buffer
-    chunkerMinWordsForTimeout: 3, // min words needed before timeout fires
+    chunkerMaxWords: 100, // words in buffer before force-flush
+    chunkerTimeoutMs: 4000, // ms of silence before flushing buffer
+    chunkerMinWordsForTimeout: 20, // min words needed before timeout fires
     chunkerFlushOnPunctuation: true, // split on punctuation characters
     chunkerPunctuation: ".!?;", // which chars count as punctuation
   },
