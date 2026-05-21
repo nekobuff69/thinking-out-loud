@@ -5,7 +5,7 @@
   padding: 1rem;
   display: flex;
   flex-direction: column;
-  min-height: 300px;
+  overflow: hidden;
 }
 
 .column-header {
@@ -18,16 +18,14 @@
 }
 
 .column-reasoning {
-  flex: 1;
+  flex: 1 1 0;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 0.85rem;
   line-height: 1.6;
-  min-height: 150px;
   padding-right: 0.5rem;
 }
-
 .column-reasoning::-webkit-scrollbar {
   width: 4px;
 }
