@@ -175,28 +175,17 @@ export class AudioGraph {
 
     /**
      * Number of PCM frames to buffer before starting playback.
-     * Provides a time cushion that absorbs delivery jitter from the
-     * TTS server, preventing buffer underruns that cause stuttering
-     * and repeated audio chunks.
-     *
-     * At 12.5 frames/sec, 4 frames ≈ 320ms of buffered audio.
-     * This trades ~0.3s initial latency for much smoother playback,
-     * especially with 3 concurrent voices competing for GPU time.
+     * Minimal pre-buffer for HTTP-based Pocket TTS — sentences arrive
+     * as few large chunks rather than many small WebSocket frames.
+     * At 24kHz, 1 frame ≈ one sentence worth of audio.
      */
-    const PRE_BUFFER_FRAMES = 4;
+    const PRE_BUFFER_FRAMES = 1;
 
     /**
      * Live streaming PCM feed.
      *
-     * Designed for the new streaming TTS path: PCM frames arrive asynchronously
-     * from WebSocket onmessage. Each `feed()` call creates and schedules an
-     * AudioBufferSourceNode.
-     *
-     * Pre-buffers the first PRE_BUFFER_FRAMES frames before scheduling
-     * playback, creating a time cushion that absorbs delivery jitter.
-     * Without pre-buffering, the AudioContext fell behind on every underrun,
-     * causing stuttering and repeated audio chunks.
-     *
+     * Designed for streaming TTS: PCM frames arrive from the TTS backend.
+     * Each `feed()` call creates and schedules an AudioBufferSourceNode.
      * @returns {{ feed: (pcm: Float32Array, sampleRate: number) => void, end: () => void, stop: () => void }}
      */
     const openStream = () => {

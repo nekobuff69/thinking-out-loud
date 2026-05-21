@@ -5,7 +5,7 @@
 Before claiming work is done, run:
 
 ```bash
-npm test              # Node built-in test runner (91 tests, 14 suites)
+npm test              # Node built-in test runner (90 tests, 14 suites)
 npm run typecheck     # TypeScript strict check-js (tsc --noEmit)
 npm run build         # Vite production build
 python3 -c "import py_compile; py_compile.compile('server/tts-server-pocket.py', doraise=True)"  # Python server syntax check

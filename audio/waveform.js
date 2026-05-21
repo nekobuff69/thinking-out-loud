@@ -1,7 +1,11 @@
 /**
- * Renders a live waveform visualization on a canvas element.
- * Driven by an AnalyserNode's time-domain data.
- * Shows amplitude bars when audio is playing, idle breathing when silent.
+ * Renders a live frequency-domain waveform visualization on a canvas element.
+ *
+ * Uses AnalyserNode.getByteFrequencyData for immediate response to any signal
+ * (no amplitude threshold gating). Bars are log-scaled to emphasize speech
+ * formants, mirrored for symmetry, with smooth peak decay.
+ *
+ * Falls back to a gentle idle breathing animation when the signal is silent.
  *
  * @param {HTMLCanvasElement} canvas
  * @param {AnalyserNode} analyser
@@ -11,15 +15,32 @@
 export function createWaveform(canvas, analyser, color) {
   const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
   if (!ctx) throw new Error("Canvas 2D context not supported");
-  const bufferLength = analyser.frequencyBinCount;
-  const dataArray = new Uint8Array(bufferLength);
+
+  const fftBins = analyser.frequencyBinCount; // typically 128 at fftSize=256
+  const freqData = new Uint8Array(fftBins);
+
+  // Number of visual bars per side (mirrored → 2 × barCount total)
+  const barCount = 48;
+
+  // Precompute a log-scale lookup: maps visual bar index → FFT bin index.
+  // Speech formants cluster in 80Hz–8kHz; log scale spreads low frequencies wider.
+  const binMap = new Uint8Array(barCount);
+  const nyquistBin = fftBins - 1;
+  for (let i = 0; i < barCount; i++) {
+    // Linear t in [0, 1], then exponential to emphasize lows
+    const t = i / (barCount - 1);
+    const exp = Math.pow(t, 2.0); // square skew towards low frequencies
+    binMap[i] = Math.round(exp * nyquistBin);
+  }
+
+  // Peak-hold state — one per visual bar (mirrored, so shared)
+  const peaks = new Float32Array(barCount);
+  const peakDecay = 0.92; // per-frame decay multiplier (~60fps)
 
   /** @type {number | null} */
   let animationId = null;
-  let isActive = false;
   let idlePhase = 0;
   const idleSpeed = 0.03;
-  const amplitudeThreshold = 10; // above this = active
 
   // Sync canvas drawing buffer to its actual rendered size
   function resize() {
@@ -41,67 +62,87 @@ export function createWaveform(canvas, analyser, color) {
     const w = rect.width;
     const h = rect.height;
 
-    // Read analyser data
-    analyser.getByteTimeDomainData(dataArray);
+    analyser.getByteFrequencyData(freqData);
 
-    // Compute RMS amplitude to detect active vs idle
-    let rms = 0;
-    for (let i = 0; i < bufferLength; i++) {
-      const v = (dataArray[i] - 128) / 128;
-      rms += v * v;
+    // Compute bar heights from log-scaled frequency data
+    const barHeights = new Float32Array(barCount);
+    let totalEnergy = 0;
+    for (let i = 0; i < barCount; i++) {
+      // Map to a small window of FFT bins around the target bin
+      const center = binMap[i];
+      const radius = Math.max(1, Math.round((i + 1) * 0.3));
+      let sum = 0;
+      let count = 0;
+      for (let j = Math.max(0, center - radius); j <= Math.min(fftBins - 1, center + radius); j++) {
+        sum += freqData[j];
+        count++;
+      }
+      const avg = sum / count / 255; // normalise to 0–1
+      barHeights[i] = avg;
+      totalEnergy += avg;
     }
-    rms = Math.sqrt(rms / bufferLength);
 
-    const wasActive = isActive;
-    isActive = rms > amplitudeThreshold / 128;
+    // Peak hold update
+    for (let i = 0; i < barCount; i++) {
+      if (barHeights[i] > peaks[i]) {
+        peaks[i] = barHeights[i];
+      } else {
+        peaks[i] *= peakDecay;
+      }
+    }
+
+    const isSilent = totalEnergy < 0.5; // near-zero energy across all bins
 
     ctx.clearRect(0, 0, w, h);
 
-    if (isActive) {
-      // Active: draw amplitude bars from time-domain data
-      const barCount = 32;
-      const barWidth = w / barCount;
-      const step = Math.floor(bufferLength / barCount);
+    const barWidth = w / (barCount * 2); // left + mirrored right
+    const gap = barWidth * 0.15;
 
-      for (let i = 0; i < barCount; i++) {
-        let sum = 0;
-        for (let j = 0; j < step; j++) {
-          const v = (dataArray[i * step + j] - 128) / 128;
-          sum += Math.abs(v);
-        }
-        const avg = sum / step;
-        const barHeight = avg * h * 1.5;
-
-        const x = i * barWidth + 1;
-        const y = (h - barHeight) / 2;
-
-        ctx.fillStyle = color;
-        ctx.globalAlpha = 0.6 + avg * 0.4;
-        ctx.fillRect(x, y, barWidth - 2, Math.max(barHeight, 2));
-      }
-      ctx.globalAlpha = 1;
-    } else {
-      // Idle: gentle breathing animation
+    if (isSilent) {
+      // Idle breathing
       idlePhase += idleSpeed;
-      const breath = 0.3 + 0.15 * Math.sin(idlePhase);
-      const barCount = 32;
-      const barWidth = w / barCount;
-
       for (let i = 0; i < barCount; i++) {
-        // Sine wave breathing pattern with slight phase offset per bar
-        const phase = idlePhase + (i / barCount) * Math.PI * 2;
-        const hNorm = breath * (0.5 + 0.5 * Math.sin(phase));
-        const barHeight = hNorm * h;
-
-        const x = i * barWidth + 1;
-        const y = (h - barHeight) / 2;
+        const phase = idlePhase + (i / barCount) * Math.PI * 1.5;
+        const hNorm = 0.08 + 0.06 * Math.sin(phase);
+        const barH = hNorm * h;
+        const x = i * barWidth + gap;
+        const y = (h - barH) / 2;
 
         ctx.fillStyle = color;
-        ctx.globalAlpha = 0.25 + hNorm * 0.3;
-        ctx.fillRect(x, y, barWidth - 2, Math.max(barHeight, 2));
+        ctx.globalAlpha = 0.2 + hNorm * 0.5;
+        ctx.fillRect(x, y, barWidth - gap * 2, Math.max(barH, 1));
+        // Mirror right
+        const mx = w - x - barWidth;
+        ctx.fillRect(mx, y, barWidth - gap * 2, Math.max(barH, 1));
       }
-      ctx.globalAlpha = 1;
+    } else {
+      // Active: mirrored frequency spectrum with peak dots
+      for (let i = 0; i < barCount; i++) {
+        const barH = barHeights[i] * h * 0.9;
+        const peakH = peaks[i] * h * 0.9;
+
+        const x = i * barWidth + gap;
+        const y = h - barH; // bars rise from bottom
+
+        // Bar — left side, rising from bottom
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.5 + barHeights[i] * 0.5;
+        ctx.fillRect(x, y, barWidth - gap * 2, Math.max(barH, 1));
+
+        // Mirror — right side
+        const mx = w - x - barWidth;
+        ctx.fillRect(mx, y, barWidth - gap * 2, Math.max(barH, 1));
+
+        // Peak dot on both sides
+        if (peakH > 1) {
+          ctx.globalAlpha = 1.0;
+          ctx.fillRect(x, h - peakH - 1, barWidth - gap * 2, 2);
+          ctx.fillRect(mx, h - peakH - 1, barWidth - gap * 2, 2);
+        }
+      }
     }
+
+    ctx.globalAlpha = 1;
   }
 
   draw();
