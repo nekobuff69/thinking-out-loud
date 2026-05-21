@@ -69,12 +69,11 @@ def _unflatten_state(flat: dict) -> dict:
     """Reverse of _flatten_state."""
     nested = {}
     for flat_key, tensor in flat.items():
-        parts = flat_key.split(".", 1)
-        if len(parts) == 2:
-            layer_key, param_key = parts
-            nested.setdefault(layer_key, {})[param_key] = tensor
-        else:
+        layer_key, _, param_key = flat_key.rpartition(".")
+        if not layer_key:
             nested[flat_key] = tensor
+        else:
+            nested.setdefault(layer_key, {})[param_key] = tensor
     return nested
 
 
