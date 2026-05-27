@@ -162,6 +162,11 @@ export class Orchestrator {
       const column = this.#columns.get(model.name);
       column?.setError(`${model.name} — unavailable`);
     }
+    // Randomize TTS playback order per session if configured
+    if (this.#ttsConfig.randomizePlayback && reachableModels.length > 1) {
+      this.#shuffleArray(reachableModels);
+    }
+    this.#sessionData.playbackOrder = reachableModels.map((m) => m.name);
 
     // Set up pipelines only for reachable models
     this.#setupPipelines(reachableModels);
@@ -224,6 +229,11 @@ export class Orchestrator {
       const configModel = this.#models.find((m) => m.name === stored.name);
       return configModel ? { ...configModel, ...stored } : stored;
     });
+    // Preserve stored playback order (for sessions with randomized playback)
+    if (sessionData.playbackOrder) {
+      const orderMap = new Map(sessionData.playbackOrder.map((name, i) => [name, i]));
+      modelsForReplay.sort((a, b) => (orderMap.get(a.name) ?? 99) - (orderMap.get(b.name) ?? 99));
+    }
     this.#setupPipelines(/** @type {ModelConfig[]} */ (/** @type {unknown} */ (modelsForReplay)));
 
     // Feed stored reasoning text into each model's pipeline concurrently
@@ -377,6 +387,19 @@ export class Orchestrator {
   #setState(newState) {
     this.#state = newState;
     this.#onStateChange?.(newState);
+  }
+
+  /**
+   * Fisher-Yates shuffle in-place.
+   * @template T
+   * @param {T[]} arr
+   * @returns {void}
+   */
+  #shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
   }
 
   /** Soft stop: abort LLM streams, finish current TTS sentence, then silence. */

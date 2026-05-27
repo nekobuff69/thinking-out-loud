@@ -15,6 +15,7 @@
  * @property {string} question
  * @property {string} mode
  * @property {SessionModelData[]} models
+ * @property {string[]} [playbackOrder] - Model names in TTS playback sequence (randomized per session)
  */
 
 /**

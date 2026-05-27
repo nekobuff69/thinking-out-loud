@@ -21,6 +21,7 @@
  * @property {number} [chunkerMinWordsForTimeout] - Min words in buffer before timeout can trigger (default: 3)
  * @property {boolean} [chunkerFlushOnPunctuation] - Whether TextChunker flushes on punctuation (default: true)
  * @property {string} [chunkerPunctuation] - Characters that trigger a TextChunker flush (default: ".!?;,")
+ * @property {boolean} [randomizePlayback] - Randomize TTS playback order per session (default: true)
  */
 
 /**
@@ -48,7 +49,7 @@ export const config = {
       provider: "lm-studio",
       url: "http://localhost:1234/v1",
       model: "gpt-oss-20b",
-      voice: "saga",
+      voice: "user_clone",
       color: "#00ff88",
       pan: -0.5,
       reasoningFormat: "separate",
@@ -85,6 +86,7 @@ export const config = {
     chunkerMinWordsForTimeout: 20, // min words needed before timeout fires
     chunkerFlushOnPunctuation: true, // split on punctuation characters
     chunkerPunctuation: ".!?;", // which chars count as punctuation
+    randomizePlayback: true, // shuffle which voice speaks first/second/third per session
   },
 
   systemPrompt: "",
