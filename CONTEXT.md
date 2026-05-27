@@ -4,7 +4,7 @@
 
 ## Purpose
 
-"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three local LLMs (Qwen, Gemma, GPT-OSS) stream their internal reasoning tokens simultaneously. Each model's reasoning is displayed in real time. The reasoning text is synthesized to speech sequentially — voice 1 speaks first, voice 2 starts when voice 1 finishes, then voice 3 — each in a distinct voice spatially panned across stereo channels with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
+"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three local LLMs (Qwen, Gemma, GPT-OSS) stream their internal reasoning tokens simultaneously. Each model's reasoning is displayed in real time. The reasoning text is synthesized to speech sequentially — voices speak one at a time in a random order per session — each in a distinct voice spatially panned across stereo channels with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
 
 ## Tech Stack
 
@@ -89,18 +89,20 @@ Orchestrator:
   3. For each reachable model:
      • Create ChannelPipeline (with per-model PocketTtsBackend injected)
      • ChannelPipeline.createChannel() → AudioGraph channel + waveform
-     • Pipelines 2 and 3 are paused — only pipeline 1 feeds TTS initially
+     • Models are shuffled into random playback order
+     • All pipelines created — only first in shuffled order feeds TTS initially;
+       the rest are paused
   4. Fire all LLM streams concurrently via `LLMProvider.streamReasoning()`
      • Tokens → ChannelPipeline.feedToken() → Column.appendToken() all 3 models
-    • Only pipeline 1 feeds TTS: TextChunker splits reasoning on
-      punctuation (`.!?;,` configurable), max words (15), or silence
-      timeout (2000ms, min 3 words). Each sentence sent via HTTP POST.
+     • Only the active pipeline feeds TTS: TextChunker splits reasoning on
+       punctuation (`.!?;,` configurable), max words (15), or silence
+       timeout (2000ms, min 3 words). Each sentence sent via HTTP POST.
      • Each sentence → PocketTtsBackend.startStream() → POST /v1/tts →
        server generates streaming WAV audio
      • PCM frames stream back over HTTP → AudioGraph channel → waveform animates
-     • When pipeline 1's TTS finishes → orchestrator advances to pipeline 2
-     • Pipeline 2 resumes → sends full accumulated reasoningText to TTS → speaks
-     • Same for pipeline 3
+     • When active pipeline's TTS finishes → orchestrator advances to next
+     • Next pipeline resumes → sends full accumulated reasoningText to TTS → speaks
+     • Repeats until all pipelines have spoken
      • Content boundary / LLM end / token cap → send remaining text + finish
      • State events → EventBus → DebugOverlay (when enabled)
   5. When last pipeline's TTS finishes → save session → Done

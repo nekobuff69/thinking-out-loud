@@ -61,7 +61,7 @@
 
 | Term | Definition | Aliases to avoid |
 |---|---|---|
-| **Sequential playback** | TTS voices speak one at a time: voice 1 finishes, then voice 2, then voice 3. All three LLMs reason simultaneously (text visible), only TTS is sequential. | Serial, one-at-a-time, monologue |
+|| **Sequential playback** | TTS voices speak one at a time, in random order per session. All three LLMs reason simultaneously (text visible), only TTS is sequential. | Serial, one-at-a-time, monologue |
 
 ## Visual domain
 
@@ -91,7 +91,7 @@
 - A **Session** queries three **Models**, each served by a **Provider**
 - Each **Model** produces one stream of **Reasoning** and one **Final answer**
 - The **Final answer** is detected at the **Content boundary** and never spoken or displayed
-- All three **Models** reason simultaneously (text displayed in all columns). TTS plays sequentially: voice 1 → voice 2 → voice 3. Only one pipeline feeds TTS at a time.
+- All three **Models** reason simultaneously (text displayed in all columns). TTS plays sequentially in random order per session. Only one pipeline feeds TTS at a time.
 - **Reasoning** tokens accumulate in active pipeline's **Unsent buffer**, then flush as complete sentences via **Text chunker** to the **TTS server** via HTTP
 - The **TTS server** receives complete text via `POST /v1/tts` and streams **PCM chunks** using the model's assigned **Voice**
 - Each **Model** has its own HTTP-based TTS pipeline (sequential playback, one active at a time)
@@ -107,7 +107,7 @@
 
 > **Dev:** "When the user hits **Ask**, do I start all three **Channels** at once?"
 >
-> **Domain expert:** "Yes — fire all three LLM fetches simultaneously. Each **Model** starts its **Reasoning** stream independently. The reasoning text appears in all three columns at once. TTS plays sequentially: pipeline 1 speaks while pipelines 2 and 3 accumulate text silently. When pipeline 1 finishes, pipeline 2 resumes and sends its full reasoning to TTS, then pipeline 3."
+> **Domain expert:** "Yes — fire all three LLM fetches simultaneously. Each **Model** starts its **Reasoning** stream independently. The reasoning text appears in all three columns at once. TTS plays sequentially but the voice order is randomized per session: the first pipeline in shuffled order speaks, while the others accumulate text silently. When that pipeline finishes, the next in shuffled order resumes and sends its full reasoning to TTS, then the last."
 >
 > **Dev:** "And the **TTS model** — does it queue text per **Channel**, or synthesize in some global order?"
 >
