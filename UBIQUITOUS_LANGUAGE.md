@@ -67,8 +67,8 @@
 
 | Term | Definition | Aliases to avoid |
 |---|---|---|
-| **Column** | A vertical panel in the UI representing one model — contains display name, reasoning text, and waveform | Pane, panel, slot, lane |
-| **Waveform** | A live canvas visualization of a channel's AnalyserNode data, rendered in the model's color | Audio viz, sound wave, oscilloscope, bars |
+|| **Column** | A vertical panel in the UI representing one model — contains display name, reasoning text, and waveform | Pane, panel, slot, lane |
+|| **Waveform** | A live frequency-domain spectrum visualization of a channel's AnalyserNode FFT data, rendered as mirrored log-scale bars in the model's color | Audio viz, sound wave, oscilloscope, bars |
 | **Idle waveform** | The gentle breathing/pulsing animation shown when a channel is silent | Standby animation, resting waveform, idle pulse |
 | **Display name** | The human-readable name for a model shown in the UI (e.g. "Qwen", not "qwen_qwen3-30b") | Label, title, heading |
 | **Color** | The distinguishing hex color assigned to a model, applied to text and waveform | Hue, tint, theme color |

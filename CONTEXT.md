@@ -268,6 +268,15 @@ AudioBufferSourceNode from PCM data — called asynchronously from HTTP response
 `end()` signals no more frames coming. `stop()` kills all sources immediately.
 Shares ducking and `activeCount` with `playStream`.
 
+### Waveform Visualization (`audio/waveform.js`)
+
+Canvas-based real-time audio visualization driven by AnalyserNode FFT data.
+Frequency-domain log-scale spectrum: mirrored bars rise from bottom on
+signal, with peak-hold decay. Idle breathing animation plays during
+silence. 1-frame pre-buffer (PRE_BUFFER_FRAMES=1) ensures waveform
+lights up instantly on first PCM chunk — no visible lag from Pocket
+TTS's sentence-level HTTP delivery.
+
 ## Session State Machine
 
 Managed by Orchestrator. All state transitions flow through `orchestrator.onStateChange()`.
