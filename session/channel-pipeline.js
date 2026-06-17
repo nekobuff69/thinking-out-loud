@@ -82,6 +82,16 @@ export class ChannelPipeline {
   #lastSentenceStartTime = 0;
   /** @type {number} */
   #lastSentenceWordCount = 0;
+  /** @type {number} */
+  #karaokeSentenceWordCount = 0;
+  /** @type {number} */
+  #karaokeSentenceStartIndex = 0;
+  /** @type {boolean} */
+  #karaokeStartedForSentence = false;
+  /** @type {number} */
+  #sentenceTotalPcmSamples = 0;
+  /** @type {number} */
+  #sentenceSampleRate = 24000;
 
 
   /** @type {string} */
@@ -163,6 +173,11 @@ export class ChannelPipeline {
     this.#msPerWord = 200;
     this.#lastSentenceStartTime = 0;
     this.#lastSentenceWordCount = 0;
+    this.#karaokeSentenceWordCount = 0;
+    this.#karaokeSentenceStartIndex = 0;
+    this.#karaokeStartedForSentence = false;
+    this.#sentenceTotalPcmSamples = 0;
+    this.#sentenceSampleRate = 24000;
     // Preserve #paused state — orchestrator may have paused this pipeline
     // before startStream is called (monologue mode). Resetting to false
     // would un-pause pipelines that should stay silent until resumed.
@@ -313,14 +328,14 @@ export class ChannelPipeline {
     }
 
     const sentenceText = /** @type {string} */ (this.#sentenceQueue.shift());
-    // Karaoke: calculate word position and estimated duration
+    // Karaoke: calculate word position and store for delayed start
     const sentenceWordCount = sentenceText.split(/\s+/).filter(Boolean).length;
     const startWordIndex = this.#ttsWordOffset;
-    const estimatedDuration = sentenceWordCount * this.#msPerWord;
     this.#ttsWordOffset += sentenceWordCount;
-    this.#lastSentenceStartTime = performance.now();
-    this.#lastSentenceWordCount = sentenceWordCount;
-    this.#column.startKaraoke?.(startWordIndex, sentenceWordCount, estimatedDuration);
+    this.#karaokeSentenceWordCount = sentenceWordCount;
+    this.#karaokeSentenceStartIndex = startWordIndex;
+    this.#karaokeStartedForSentence = false;
+    this.#sentenceTotalPcmSamples = 0;
     this.#currentSentenceActive = true;
     this.#ensureTtsStream();
 
@@ -328,16 +343,36 @@ export class ChannelPipeline {
       sentenceText,
       this.#model.voice,
       (pcm, sampleRate) => {
+        // Track PCM samples for duration calculation
+        this.#sentenceTotalPcmSamples += pcm.length;
+        this.#sentenceSampleRate = sampleRate;
+
+        // Start karaoke on first audio chunk (when audio actually begins)
+        if (!this.#karaokeStartedForSentence) {
+          this.#karaokeStartedForSentence = true;
+          const estimatedDuration = this.#karaokeSentenceWordCount * this.#msPerWord;
+          this.#column.startKaraoke?.(
+            this.#karaokeSentenceStartIndex,
+            this.#karaokeSentenceWordCount,
+            estimatedDuration
+          );
+        }
+
         this.#audioStream?.feed(pcm, sampleRate);
       },
       {
         onDone: () => {
-          this.#column.stopKaraoke?.();
-          // Adaptive timing: update msPerWord based on actual sentence duration
-          const actualDuration = performance.now() - this.#lastSentenceStartTime;
-          if (this.#lastSentenceWordCount > 0 && actualDuration > 0) {
-            this.#msPerWord = actualDuration / this.#lastSentenceWordCount;
+          // Compute actual audio duration from PCM samples
+          const actualAudioDurationMs = (this.#sentenceTotalPcmSamples / this.#sentenceSampleRate) * 1000;
+
+          // Update karaoke timing with actual duration
+          if (actualAudioDurationMs > 0 && this.#karaokeSentenceWordCount > 0) {
+            this.#column.updateKaraokeDuration?.(actualAudioDurationMs);
+            // Update adaptive timing for next sentence
+            this.#msPerWord = actualAudioDurationMs / this.#karaokeSentenceWordCount;
           }
+
+          // Karaoke will stop naturally when RAF loop reaches end of sentence
           this.#currentSentenceActive = false;
           this.#sendNextSentence();
         },
@@ -518,6 +553,10 @@ export class ChannelPipeline {
     this.#audioStream?.stop();
     this.#column.stopKaraoke?.();
     this.#ttsWordOffset = 0;
+    this.#karaokeSentenceWordCount = 0;
+    this.#karaokeSentenceStartIndex = 0;
+    this.#karaokeStartedForSentence = false;
+    this.#sentenceTotalPcmSamples = 0;
 
     this.#cleanupReconnectListener();
     this.#ttsActive = false;
@@ -552,6 +591,11 @@ export class ChannelPipeline {
     this.#ttsEngine.stop();
     this.#sentenceQueue.length = 0;
     this.#currentSentenceActive = false;
+    this.#column.stopKaraoke?.();
+    this.#karaokeSentenceWordCount = 0;
+    this.#karaokeSentenceStartIndex = 0;
+    this.#karaokeStartedForSentence = false;
+    this.#sentenceTotalPcmSamples = 0;
 
     this.#ensureTtsStream();
 

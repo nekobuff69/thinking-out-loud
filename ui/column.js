@@ -15,6 +15,7 @@ import "./column.css";
  * @property {(fn: () => void) => void} onMuteToggle
  * @property {(fn: () => void) => void} onSoloToggle
  * @property {(startWordIndex: number, wordCount: number, durationMs: number) => void} startKaraoke
+ * @property {(durationMs: number) => void} updateKaraokeDuration
  * @property {() => void} stopKaraoke
  */
 
@@ -115,6 +116,10 @@ export function createColumn(container, model) {
   let karaokeSentenceCount = 0;
   /** @type {number} */
   let karaokeActiveIndex = -1;
+  /** @type {number} */
+  let karaokeWordDuration = 0;
+  /** @type {number} */
+  let karaokeWordStartTime = 0;
 
   /**
    * @param {string} token
@@ -191,8 +196,8 @@ export function createColumn(container, model) {
 
     if (wordCount <= 0 || startWordIndex >= wordSpans.length) return;
 
-    const wordDuration = durationMs / wordCount;
-    let wordStartTime = performance.now();
+    karaokeWordDuration = durationMs / wordCount;
+    karaokeWordStartTime = performance.now();
 
     // Activate first word immediately
     karaokeActiveIndex = startWordIndex;
@@ -201,9 +206,9 @@ export function createColumn(container, model) {
 
     function karaokeStep() {
       const now = performance.now();
-      const elapsed = now - wordStartTime;
+      const elapsed = now - karaokeWordStartTime;
 
-      if (elapsed >= wordDuration) {
+      if (elapsed >= karaokeWordDuration) {
         const prevIndex = karaokeActiveIndex;
         const nextIndex = karaokeActiveIndex + 1;
         const sentenceEnd = karaokeSentenceStart + karaokeSentenceCount;
@@ -225,7 +230,7 @@ export function createColumn(container, model) {
         wordSpans[nextIndex].classList.add("active");
         wordSpans[nextIndex].scrollIntoView({ block: "nearest", behavior: "smooth" });
 
-        wordStartTime = now;
+        karaokeWordStartTime = now;
       }
 
       karaokeRafId = requestAnimationFrame(karaokeStep);
@@ -256,6 +261,27 @@ export function createColumn(container, model) {
     karaokeSentenceStart = -1;
     karaokeSentenceCount = 0;
     karaokeActiveIndex = -1;
+  }
+
+  /**
+   * Update the duration of the current karaoke sentence mid-animation.
+   * Recalculates per-word timing while preserving current progress.
+   * @param {number} durationMs - New total duration for the sentence
+   * @returns {void}
+   */
+  function updateKaraokeDuration(durationMs) {
+    if (karaokeRafId === null || karaokeSentenceCount <= 0) return;
+
+    const now = performance.now();
+    const elapsedInCurrentWord = now - karaokeWordStartTime;
+    const oldWordDuration = karaokeWordDuration;
+    const progressInCurrentWord = Math.min(elapsedInCurrentWord / oldWordDuration, 1);
+
+    // Recalculate word duration
+    karaokeWordDuration = durationMs / karaokeSentenceCount;
+
+    // Adjust start time so current word's progress is preserved
+    karaokeWordStartTime = now - (progressInCurrentWord * karaokeWordDuration);
   }
 
   /**
@@ -368,6 +394,7 @@ export function createColumn(container, model) {
     attachWaveform,
     stopWaveform,
     startKaraoke,
+    updateKaraokeDuration,
     stopKaraoke,
     setMuted,
     setSoloed,
