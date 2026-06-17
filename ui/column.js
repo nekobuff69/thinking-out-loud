@@ -1,6 +1,7 @@
 import { createWaveform } from "../audio/waveform.js";
 import "./column.css";
 
+
 /**
  * @typedef {Object} ColumnAPI
  * @property {HTMLDivElement} element
@@ -9,6 +10,10 @@ import "./column.css";
  * @property {(message: string) => void} setError
  * @property {(analyserNode: AnalyserNode, color: string) => void} attachWaveform
  * @property {() => void} stopWaveform
+ * @property {(active: boolean) => void} setMuted
+ * @property {(active: boolean) => void} setSoloed
+ * @property {(fn: () => void) => void} onMuteToggle
+ * @property {(fn: () => void) => void} onSoloToggle
  */
 
 /**
@@ -31,9 +36,23 @@ export function createColumn(container, model) {
   const header = document.createElement("div");
   header.className = "column-header";
   header.style.color = model.color;
-  header.textContent = model.name;
 
-  // Reasoning text container
+
+
+  // Model name, then M/S buttons on the right
+  header.appendChild(document.createTextNode(model.name));
+
+  const muteBtn = document.createElement('button');
+  muteBtn.className = 'mute-btn';
+  muteBtn.textContent = 'M';
+  muteBtn.style.marginLeft = '12px';
+  muteBtn.setAttribute('aria-label', 'Mute ' + model.name);
+  const soloBtn = document.createElement('button');
+  soloBtn.className = 'solo-btn';
+  soloBtn.textContent = 'S';
+  soloBtn.setAttribute('aria-label', 'Solo ' + model.name);
+  header.appendChild(muteBtn);
+  header.appendChild(soloBtn);
   const reasoningEl = document.createElement("div");
   reasoningEl.className = "column-reasoning";
   reasoningEl.style.color = model.color;
@@ -143,6 +162,52 @@ export function createColumn(container, model) {
     reasoningEl.style.color = "";
   }
 
+  /** @type {(() => void) | null} */
+  let onMuteToggleCallback = null;
+  /** @type {(() => void) | null} */
+  let onSoloToggleCallback = null;
+
+  muteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onMuteToggleCallback?.();
+  });
+  soloBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onSoloToggleCallback?.();
+  });
+
+
+  /**
+   * @param {boolean} active
+   */
+  function setMuted(active) {
+    muteBtn.classList.toggle('active', active);
+  }
+
+
+  /**
+   * @param {boolean} active
+   */
+  function setSoloed(active) {
+    soloBtn.classList.toggle('active', active);
+  }
+
+
+  /**
+   * @param {() => void} fn
+   */
+  function onMuteToggle(fn) {
+    onMuteToggleCallback = fn;
+  }
+
+
+  /**
+   * @param {() => void} fn
+   */
+  function onSoloToggle(fn) {
+    onSoloToggleCallback = fn;
+  }
+
   return {
     element: col,
     appendToken,
@@ -150,5 +215,9 @@ export function createColumn(container, model) {
     setError,
     attachWaveform,
     stopWaveform,
+    setMuted,
+    setSoloed,
+    onMuteToggle,
+    onSoloToggle,
   };
 }

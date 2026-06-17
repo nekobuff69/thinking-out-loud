@@ -93,6 +93,12 @@ const orchestrator = new Orchestrator({
   storage: store,
 });
 
+// Wire column mute/solo buttons to orchestrator
+for (const [name, column] of columns) {
+  column.onMuteToggle(() => orchestrator.toggleMute(name));
+  column.onSoloToggle(() => orchestrator.toggleSolo(name));
+}
+
 orchestrator.onStateChange((state) => {
   stateLabel.textContent = state;
   if (state.startsWith("Error")) {

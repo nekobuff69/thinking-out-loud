@@ -64,6 +64,12 @@ export class Orchestrator {
   #onEventBusReady = null;
   /** @type {Map<string, import("../llm/providers/llm-provider.js").LLMProvider>} */
   #providerCache = new Map();
+  /** @type {Set<string>} */
+  #muted = new Set();
+  /** @type {Set<string>} */
+  #soloed = new Set();
+  /** @type {Map<string, { muteGain: GainNode, setAudible: (v: boolean) => void }>} */
+  #channelGains = new Map();
 
   /**
    * @param {OrchestratorDeps} deps
@@ -301,6 +307,14 @@ export class Orchestrator {
       });
 
       pipeline.createChannel();
+      // Store channel gain info for mute/solo control
+      const ch = pipeline.channel;
+      if (ch) {
+        this.#channelGains.set(model.name, {
+          muteGain: ch.muteGain,
+          setAudible: ch.setAudible,
+        });
+      }
 
       // Wire TextChunker if enabled in config
       if (this.#ttsConfig.useTextChunker) {
@@ -409,5 +423,63 @@ export class Orchestrator {
     }
     this.#setState("Done");
     this.#state = "Idle";
+  }
+  /**
+   * Toggle mute for a model.
+   * @param {string} modelName
+   * @returns {void}
+   */
+  toggleMute(modelName) {
+    if (this.#muted.has(modelName)) {
+      this.#muted.delete(modelName);
+    } else {
+      this.#muted.add(modelName);
+    }
+    this.#recomputeGains();
+  }
+
+  /**
+   * Toggle solo for a model.
+   * @param {string} modelName
+   * @returns {void}
+   */
+  toggleSolo(modelName) {
+    if (this.#soloed.has(modelName)) {
+      this.#soloed.delete(modelName);
+    } else {
+      this.#soloed.add(modelName);
+    }
+    this.#recomputeGains();
+  }
+
+  /**
+   * Recompute gain for all channels based on current mute/solo state.
+
+   * Mute always takes effect. Solo narrows the field — only soloed channels
+   * are candidates, and mute further filters within that set.
+   * @returns {void}
+   */
+  #recomputeGains() {
+    const hasSolo = this.#soloed.size > 0;
+
+    for (const [name, info] of this.#channelGains) {
+      const isSoloed = this.#soloed.has(name);
+      const isMuted = this.#muted.has(name);
+
+      // Mute always applies; solo narrows the candidate set
+      const audible = (hasSolo ? isSoloed : true) && !isMuted;
+      const gainValue = audible ? 1.0 : 0.0;
+
+      // Set gain with short ramp to avoid clicks
+      info.muteGain.gain.setTargetAtTime(gainValue, info.muteGain.context.currentTime, 0.02);
+      info.setAudible(audible);
+
+      // Update column button visuals
+      const column = this.#columns.get(name);
+      if (column) {
+        column.setMuted?.(this.#muted.has(name));
+        column.setSoloed?.(this.#soloed.has(name));
+      }
+    }
   }
 }

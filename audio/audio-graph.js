@@ -1,3 +1,4 @@
+
 /**
  * @typedef {Object} AudioGraphChannel
  * @property {(buffer: AudioBuffer, onEnd?: () => void) => AudioBufferSourceNode} play
@@ -5,6 +6,8 @@
  * @property {() => { feed: (pcm: Float32Array, sampleRate: number) => void, end: () => void, stop: () => void }} openStream
  * @property {AnalyserNode} analyser
  * @property {GainNode} gain
+ * @property {GainNode} muteGain
+ * @property {(audible: boolean) => void} setAudible
  * @property {() => void} stopAll
  */
 
@@ -60,12 +63,16 @@ export class AudioGraph {
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 256;
 
-    gain.connect(panner);
+    const muteGain = ctx.createGain();
+    muteGain.gain.value = 1.0;
+    gain.connect(muteGain);
+    muteGain.connect(panner);
     panner.connect(analyser);
     analyser.connect(ctx.destination);
 
     const activeSources = new Set();
-    this.#channels.push({ gain, activeSources });
+    const chEntry = { gain, activeSources, audible: true };
+    this.#channels.push(chEntry);
 
     /**
      * Play an AudioBuffer through this channel.
@@ -74,8 +81,10 @@ export class AudioGraph {
      * @returns {AudioBufferSourceNode}
      */
     const play = (buffer, onEnd) => {
-      this.#activeCount++;
-      this.#updateDucking();
+      if (chEntry.audible) {
+        this.#activeCount++;
+        this.#updateDucking();
+      }
 
       const source = ctx.createBufferSource();
       source.buffer = buffer;
@@ -85,8 +94,10 @@ export class AudioGraph {
 
       source.onended = () => {
         activeSources.delete(source);
-        this.#activeCount = Math.max(0, this.#activeCount - 1);
-        this.#updateDucking();
+        if (chEntry.audible) {
+          this.#activeCount = Math.max(0, this.#activeCount - 1);
+          this.#updateDucking();
+        }
         onEnd?.();
       };
 
@@ -108,8 +119,10 @@ export class AudioGraph {
      * @returns {{ stop: () => void }}
      */
     const playStream = (streamFn) => {
-      this.#activeCount++;
-      this.#updateDucking();
+      if (chEntry.audible) {
+        this.#activeCount++;
+        this.#updateDucking();
+      }
 
       const sources = new Set();
       let stopped = false;
@@ -145,7 +158,7 @@ export class AudioGraph {
 
         source.onended = () => {
           sources.delete(source);
-          if (sources.size === 0 && stopped) {
+          if (chEntry.audible && sources.size === 0 && stopped) {
             this.#activeCount = Math.max(0, this.#activeCount - 1);
             this.#updateDucking();
           }
@@ -165,7 +178,7 @@ export class AudioGraph {
             try { source.stop(); } catch {}
             sources.delete(source);
           }
-          if (sources.size === 0) {
+          if (chEntry.audible && sources.size === 0) {
             this.#activeCount = Math.max(0, this.#activeCount - 1);
             this.#updateDucking();
           }
@@ -189,8 +202,10 @@ export class AudioGraph {
      * @returns {{ feed: (pcm: Float32Array, sampleRate: number) => void, end: () => void, stop: () => void }}
      */
     const openStream = () => {
-      this.#activeCount++;
-      this.#updateDucking();
+      if (chEntry.audible) {
+        this.#activeCount++;
+        this.#updateDucking();
+      }
 
       const sources = new Set();
       let ended = false;
@@ -285,8 +300,10 @@ export class AudioGraph {
           flushPreBuffer();
         }
         ended = true;
-        this.#activeCount = Math.max(0, this.#activeCount - 1);
-        this.#updateDucking();
+        if (chEntry.audible) {
+          this.#activeCount = Math.max(0, this.#activeCount - 1);
+          this.#updateDucking();
+        }
       };
 
       /**
@@ -301,7 +318,7 @@ export class AudioGraph {
           try { source.stop(); } catch {}
           sources.delete(source);
         }
-        if (!ended) {
+        if (chEntry.audible && !ended) {
           this.#activeCount = Math.max(0, this.#activeCount - 1);
           this.#updateDucking();
         }
@@ -310,7 +327,15 @@ export class AudioGraph {
       return { feed, end, stop };
     };
 
-    return { play, playStream, openStream, analyser, gain, stopAll };
+
+    /**
+     * @param {boolean} value
+     */
+    const setAudible = (value) => {
+      chEntry.audible = value;
+    };
+
+    return { play, playStream, openStream, analyser, gain, muteGain, setAudible, stopAll };
   }
 
   get activeCount() {

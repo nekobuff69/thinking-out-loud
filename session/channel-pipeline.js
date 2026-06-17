@@ -123,6 +123,13 @@ export class ChannelPipeline {
     this.#emitProgress("loaded");
   }
 
+  /** Expose the underlying AudioGraph channel for gain control.
+   * @returns {import("../audio/audio-graph.js").AudioGraphChannel | null}
+   */
+  get channel() {
+    return this.#channel;
+  }
+
   // ------------------------------------------------------------------
   // Live streaming path
   // ------------------------------------------------------------------
