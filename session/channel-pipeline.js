@@ -74,6 +74,14 @@ export class ChannelPipeline {
   #wordCount = 0;
   /** @type {boolean} */
   #isCapped = false;
+  /** @type {number} */
+  #ttsWordOffset = 0;
+  /** @type {number} */
+  #msPerWord = 200; // adaptive, default ~5 words/sec
+  /** @type {number} */
+  #lastSentenceStartTime = 0;
+  /** @type {number} */
+  #lastSentenceWordCount = 0;
 
 
   /** @type {string} */
@@ -151,6 +159,10 @@ export class ChannelPipeline {
     this.#ttsStreamOpened = false;
     this.#sentenceQueue = [];
     this.#currentSentenceActive = false;
+    this.#ttsWordOffset = 0;
+    this.#msPerWord = 200;
+    this.#lastSentenceStartTime = 0;
+    this.#lastSentenceWordCount = 0;
     // Preserve #paused state — orchestrator may have paused this pipeline
     // before startStream is called (monologue mode). Resetting to false
     // would un-pause pipelines that should stay silent until resumed.
@@ -301,6 +313,14 @@ export class ChannelPipeline {
     }
 
     const sentenceText = /** @type {string} */ (this.#sentenceQueue.shift());
+    // Karaoke: calculate word position and estimated duration
+    const sentenceWordCount = sentenceText.split(/\s+/).filter(Boolean).length;
+    const startWordIndex = this.#ttsWordOffset;
+    const estimatedDuration = sentenceWordCount * this.#msPerWord;
+    this.#ttsWordOffset += sentenceWordCount;
+    this.#lastSentenceStartTime = performance.now();
+    this.#lastSentenceWordCount = sentenceWordCount;
+    this.#column.startKaraoke?.(startWordIndex, sentenceWordCount, estimatedDuration);
     this.#currentSentenceActive = true;
     this.#ensureTtsStream();
 
@@ -312,10 +332,17 @@ export class ChannelPipeline {
       },
       {
         onDone: () => {
+          this.#column.stopKaraoke?.();
+          // Adaptive timing: update msPerWord based on actual sentence duration
+          const actualDuration = performance.now() - this.#lastSentenceStartTime;
+          if (this.#lastSentenceWordCount > 0 && actualDuration > 0) {
+            this.#msPerWord = actualDuration / this.#lastSentenceWordCount;
+          }
           this.#currentSentenceActive = false;
           this.#sendNextSentence();
         },
         onError: (msg) => {
+          this.#column.stopKaraoke?.();
           this.#currentSentenceActive = false;
           this.setError(msg);
           this.#sendNextSentence();
@@ -489,6 +516,8 @@ export class ChannelPipeline {
     this.#sentenceQueue.length = 0;
     this.#currentSentenceActive = false;
     this.#audioStream?.stop();
+    this.#column.stopKaraoke?.();
+    this.#ttsWordOffset = 0;
 
     this.#cleanupReconnectListener();
     this.#ttsActive = false;

@@ -14,6 +14,8 @@ import "./column.css";
  * @property {(active: boolean) => void} setSoloed
  * @property {(fn: () => void) => void} onMuteToggle
  * @property {(fn: () => void) => void} onSoloToggle
+ * @property {(startWordIndex: number, wordCount: number, durationMs: number) => void} startKaraoke
+ * @property {() => void} stopKaraoke
  */
 
 /**
@@ -95,26 +97,165 @@ export function createColumn(container, model) {
   /** @type {string} */
   let reasoningText = "";
 
+  /** @type {HTMLSpanElement[]} */
+  let wordSpans = [];
+
+  /** @type {string} */
+  let currentWordBuffer = "";
+
+  /** @type {HTMLSpanElement | null} */
+  let currentWordSpan = null;
+
+  // Karaoke state
+  /** @type {number | null} */
+  let karaokeRafId = null;
+  /** @type {number} */
+  let karaokeSentenceStart = -1;
+  /** @type {number} */
+  let karaokeSentenceCount = 0;
+  /** @type {number} */
+  let karaokeActiveIndex = -1;
+
   /**
    * @param {string} token
    * @returns {void}
    */
   function appendToken(token) {
     reasoningText += token;
-    reasoningEl.textContent = reasoningText;
 
-    // Check if we're at the bottom
+    for (let i = 0; i < token.length; i++) {
+      const c = token[i];
+
+      if (/\s/.test(c)) {
+        // Word boundary — finalize current word if any
+        if (currentWordSpan) {
+          currentWordSpan.textContent = currentWordBuffer;
+          wordSpans.push(currentWordSpan);
+          currentWordSpan = null;
+          currentWordBuffer = "";
+        }
+        // Append whitespace as a text node
+        reasoningEl.appendChild(document.createTextNode(c));
+      } else {
+        // Part of a word
+        currentWordBuffer += c;
+        if (currentWordSpan) {
+          // Update in-place span
+          currentWordSpan.textContent = currentWordBuffer;
+        } else {
+          // Create new span for this word
+          currentWordSpan = document.createElement("span");
+          currentWordSpan.className = "karaoke-word";
+          currentWordSpan.textContent = c;
+          reasoningEl.appendChild(currentWordSpan);
+        }
+      }
+    }
+
+    // Auto-scroll logic
     const { scrollTop, scrollHeight, clientHeight } = reasoningEl;
     const atBottom = scrollHeight - scrollTop - clientHeight < 10;
 
     if (atBottom) {
-      // Auto-scroll to bottom
       reasoningEl.scrollTop = reasoningEl.scrollHeight;
     } else {
-      // User scrolled up — show indicator
       hasNewContentBelow = true;
       scrollIndicator.style.display = "block";
     }
+  }
+
+
+  /**
+   * @param {number} startWordIndex
+   * @param {number} wordCount
+   * @param {number} durationMs
+   * @returns {void}
+   */
+  function startKaraoke(startWordIndex, wordCount, durationMs) {
+    // Cancel any running karaoke
+    if (karaokeRafId !== null) {
+      cancelAnimationFrame(karaokeRafId);
+      karaokeRafId = null;
+    }
+
+    // Mark all already-played words as 'past'
+    const playedEnd = Math.min(startWordIndex, wordSpans.length);
+    for (let i = 0; i < playedEnd; i++) {
+      wordSpans[i].classList.add("past");
+    }
+
+    // Set active sentence range
+    karaokeSentenceStart = startWordIndex;
+    karaokeSentenceCount = wordCount;
+    karaokeActiveIndex = -1;
+
+    if (wordCount <= 0 || startWordIndex >= wordSpans.length) return;
+
+    const wordDuration = durationMs / wordCount;
+    let wordStartTime = performance.now();
+
+    // Activate first word immediately
+    karaokeActiveIndex = startWordIndex;
+    wordSpans[startWordIndex].classList.add("active");
+    wordSpans[startWordIndex].scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+    function karaokeStep() {
+      const now = performance.now();
+      const elapsed = now - wordStartTime;
+
+      if (elapsed >= wordDuration) {
+        const prevIndex = karaokeActiveIndex;
+        const nextIndex = karaokeActiveIndex + 1;
+        const sentenceEnd = karaokeSentenceStart + karaokeSentenceCount;
+
+        // Mark previous word as past
+        if (prevIndex >= 0 && prevIndex < wordSpans.length) {
+          wordSpans[prevIndex].classList.remove("active");
+          wordSpans[prevIndex].classList.add("past");
+        }
+
+        if (nextIndex >= sentenceEnd || nextIndex >= wordSpans.length) {
+          // Sentence complete
+          karaokeRafId = null;
+          return;
+        }
+
+        // Activate next word
+        karaokeActiveIndex = nextIndex;
+        wordSpans[nextIndex].classList.add("active");
+        wordSpans[nextIndex].scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+        wordStartTime = now;
+      }
+
+      karaokeRafId = requestAnimationFrame(karaokeStep);
+    }
+
+    karaokeRafId = requestAnimationFrame(karaokeStep);
+  }
+
+  /**
+   * @returns {void}
+   */
+  function stopKaraoke() {
+    if (karaokeRafId !== null) {
+      cancelAnimationFrame(karaokeRafId);
+      karaokeRafId = null;
+    }
+
+    // Mark all words in the sentence as 'past'
+    if (karaokeSentenceStart >= 0) {
+      const end = Math.min(karaokeSentenceStart + karaokeSentenceCount, wordSpans.length);
+      for (let i = karaokeSentenceStart; i < end; i++) {
+        wordSpans[i].classList.remove("active");
+        wordSpans[i].classList.add("past");
+      }
+    }
+
+    // Reset sentence tracking
+    karaokeSentenceStart = -1;
+    karaokeSentenceCount = 0;
+    karaokeActiveIndex = -1;
   }
 
   /**
@@ -139,9 +280,20 @@ export function createColumn(container, model) {
    * @returns {void}
    */
   function clear() {
+    // Cancel any running karaoke
+    if (karaokeRafId !== null) {
+      cancelAnimationFrame(karaokeRafId);
+      karaokeRafId = null;
+    }
+    karaokeSentenceStart = -1;
+    karaokeSentenceCount = 0;
+    karaokeActiveIndex = -1;
     col.classList.remove("has-error");
     reasoningText = "";
     reasoningEl.textContent = "";
+    wordSpans = [];
+    currentWordBuffer = "";
+    currentWordSpan = null;
     scrollIndicator.style.display = "none";
     userScrolledUp = false;
     hasNewContentBelow = false;
@@ -215,6 +367,8 @@ export function createColumn(container, model) {
     setError,
     attachWaveform,
     stopWaveform,
+    startKaraoke,
+    stopKaraoke,
     setMuted,
     setSoloed,
     onMuteToggle,

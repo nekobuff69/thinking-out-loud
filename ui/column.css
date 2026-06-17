@@ -27,6 +27,7 @@
   font-size: 0.85rem;
   line-height: 1.6;
   padding-right: 0.5rem;
+  scroll-behavior: smooth;
 }
 .column-reasoning::-webkit-scrollbar {
   width: 4px;
@@ -100,4 +101,19 @@
   background: #ccaa22;
   border-color: #ccaa22;
   color: #fff;
+}
+/* Karaoke word highlighting for TTS playback */
+.karaoke-word {
+  transition: color 0.15s ease, opacity 0.15s ease;
+  opacity: 0.85;
+}
+
+.karaoke-word.past {
+  opacity: 0.4;
+}
+
+.karaoke-word.active {
+  opacity: 1;
+  text-shadow: 0 0 8px currentColor;
+  font-weight: 600;
 }
