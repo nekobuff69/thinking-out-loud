@@ -25,12 +25,14 @@ Single-context repo:
 ├── docs/adr/
 │   └── 001-deepen-module-architecture.md
 ├── ui/          (prompt-selector, column, history + CSS)
-├── session/     (orchestrator, channel-pipeline, storage + adapters)
+├── session/     (orchestrator, channel-pipeline, storage, event-bus, adapters)
 ├── tts/         (pocket-tts-backend, tts-engine, text-chunker)
 ├── audio/       (audio-graph, waveform)
-├── llm/         (llm-stream, health-check)
+├── llm/         (llm-stream, health-check, providers/)
+├── server/      (tts-server-pocket.py, test_server_pocket.py)
+├── docs/        (adr/, debug-overlay-reference.md, tts-technology-evaluation.md)
 ├── styles/      (global.css, top-bar.css)
-└── test/        (15 suites, 64 tests)
+└── test/        (14 suites, 90 tests)
 ```
 
 ## Use the glossary's vocabulary

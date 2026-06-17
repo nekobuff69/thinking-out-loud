@@ -20,7 +20,7 @@ export class TTSEngine {
    * Sends text to the server and delivers PCM audio chunks as they are generated.
    *
    * @param {string} text - Text to synthesize
-   * @param {string} voice - Voice identifier (Kyutai pre-computed embedding name)
+   * @param {string} voice - Voice identifier (WAV path or .safetensors voice state name for Pocket TTS)
    * @param {(pcm: Float32Array, sampleRate: number) => void} onAudioChunk - Called for each PCM frame
    * @param {{ onDone?: () => void, onError?: (message: string) => void }} [callbacks] - Stream lifecycle callbacks
    * @returns {void}

@@ -47,7 +47,7 @@ The main trade-off is losing DSM's **token-level incremental text feeding**. Poc
 
 ### What stays
 - `tts/text-chunker.js` — reused for sentence splitting
-- `ui/` components — DebugOverlay, Column, mode-toggle unchanged
+- `ui/` components — DebugOverlay, Column unchanged
 - `session/orchestrator.js` — sequential TTS playback per model, same semantics
 - `session/event-bus.js` — same event model
 
@@ -55,7 +55,6 @@ The main trade-off is losing DSM's **token-level incremental text feeding**. Poc
 - `server/tts-server-streaming.py` — DSM WebSocket server
 - `server/tts-server.py` — legacy single-shot server
 - `tts/kyutai-backend.js` — DSM WebSocket client
-- `tts/tts-engine.js` — DSM engine abstraction
 - `server/requirements.txt` — replace `moshi-mlx` with `pocket-tts`
 
 ### What is gained

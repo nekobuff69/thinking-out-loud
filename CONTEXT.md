@@ -12,7 +12,7 @@
 - **Build:** Vite dev server + production bundler
 - **LLM Inference:** OpenAI-compatible local providers (LM Studio, etc.) via `fetch()` + SSE
 - **TTS:** Pocket TTS (100M params, CPU-only) via local Python server. Streaming WAV audio over HTTP (`POST /v1/tts` with `{text, voice}`). Voice cloning from any WAV file via `get_state_for_audio_prompt()`. Sentence-level text input, ~200ms first-audio latency.
-- **TTS Protocol:** HTTP request/response (`POST /v1/tts` → streaming WAV) for live sessions; legacy single-shot `synthesize` protocol preserved for replay.
+- **TTS Protocol:** HTTP request/response (`POST /v1/tts` → streaming WAV). Replay uses the same endpoint with `playStream(streamFn)` audio mode instead of `openStream()`.
 - **TTS Reference:** See ADR-005 (`docs/adr/005-pocket-tts-switch.md`). Upstream: [Pocket TTS](https://github.com/kyutai-labs/pocket-tts), [CALM paper](https://arxiv.org/abs/2509.06926).
 - **Audio:** Web Audio API (AudioContext, GainNode, StereoPannerNode, AnalyserNode)
 - **Storage:** localStorage with adapter seam (in-memory for tests)
@@ -95,8 +95,8 @@ Orchestrator:
   4. Fire all LLM streams concurrently via `LLMProvider.streamReasoning()`
      • Tokens → ChannelPipeline.feedToken() → Column.appendToken() all 3 models
      • Only the active pipeline feeds TTS: TextChunker splits reasoning on
-       punctuation (`.!?;,` configurable), max words (15), or silence
-       timeout (2000ms, min 3 words). Each sentence sent via HTTP POST.
+       punctuation (`.!?;`, configurable), max words (configurable, default 100), or silence
+       timeout (configurable, default 4000ms, min 20 words). Each sentence sent via HTTP POST.
      • Each sentence → PocketTtsBackend.startStream() → POST /v1/tts →
        server generates streaming WAV audio
      • PCM frames stream back over HTTP → AudioGraph channel → waveform animates
@@ -119,8 +119,8 @@ orchestrator.replay(sessionData)
   ▼
 For each stored model reasoning:
   • Create fresh ChannelPipeline + Channel
-  • ChannelPipeline.drainText(storedReasoning) sends full text via
-    legacy single-shot synthesiz protocol + playStream(streamFn) audio mode
+  • ChannelPipeline.drainText(storedReasoning) feeds text token-by-token with visual
+    delay, then calls startStream() + playStream(streamFn) for gapless audio
 ```
 
 ## Key Module Interfaces
@@ -130,26 +130,32 @@ For each stored model reasoning:
 Owns one Model's entire pipeline end-to-end. The Orchestrator delegates to it.
 
 ```
-new ChannelPipeline({ model, ttsConfig, column, ttsBackend, llmProvider, audioGraph, onIdle, eventBus })
+new ChannelPipeline({ model, ttsConfig, column, ttsEngine, llmProvider, audioGraph, onIdle, eventBus })
   .createChannel()                    // Creates audio channel (openStream mode) + waveform
   .startStream(systemPrompt, question, signal?)  // → Promise (LLM → incremental TTS)
-  .drainText(text)                    // Replay stored reasoning (legacy synthesize protocol)
+  .drainText(text)                    // Replay stored reasoning (token-by-token + playStream)
   .feedToken(token)                   // Token injection → TextChunker → sentence queue
+  .flushTts(text)                     // Public method callable by TextChunker's onFlush
+  .setTextChunker(chunker)            // Wire a TextChunker instance for prosody tuning
+  .setContentHit()                    // Mark content boundary — flush pending, stop TTS feed
+  .setError(message)                  // Set error on column + emit pipeline-error event
   .softStop()                         // Abort HTTP requests + stop audio. Backend stays alive.
   .pause() / .resume()                // Pause/resume TTS feeding (sequential playback)
-  .isActive / .isCapped / .reasoningText  // Getters
+  .isActive / .isCapped / .reasoningText / .modelName  // Getters
 ```
 
 
-**Text feeding (live path):** Tokens route through TextChunker, which flushes on
-punctuation (`.` `!` `?` `;` `,` — configurable), max words (default 15), or silence timeout
-(2000ms, min 3 words). Each flushed chunk enters the `#sentenceQueue` and is sent as a
-separate HTTP POST via `PocketTtsBackend.startStream()`. Sentences play sequentially
-— next starts only after current `onDone`. A single audio stream (`openStream()`) is
-reused across all sentences. Paused pipelines skip TTS feeding; `resume()` re-feeds the
-full accumulated `#reasoningText` through the TextChunker.
-**Replay path:** `drainText()` uses the legacy `startStream(fullText, voice, ...)` API and
-`playStream(streamFn)` audio mode — no incremental protocol needed for pre-recorded text.
+**Text feeding (live path):** Tokens route through TextChunker (when enabled), which flushes on
+punctuation (`.` `!` `?` `;` — configurable, no comma by default), max words (configurable,
+default 100), or silence timeout (configurable, default 4000ms, min 20 words). Each flushed
+chunk enters the `#sentenceQueue` and is sent as a separate HTTP POST via
+`PocketTtsBackend.startStream()`. Sentences play sequentially — next starts only after
+current `onDone`. A single audio stream (`openStream()`) is reused across all sentences.
+Paused pipelines skip TTS feeding; `resume()` re-feeds the full accumulated
+`#reasoningText` through the TextChunker (or as one chunk in non-chunker path).
+**Replay path:** `drainText()` feeds text token-by-token with a visual delay, then calls
+`startStream(fullText, voice, ...)` + `playStream(streamFn)` audio mode — the same TTS
+endpoint but using the gapless-scheduling audio mode rather than the live openStream().
 
 ### LLMProvider (`llm/providers/llm-provider.js`)
 
@@ -191,14 +197,13 @@ startStream(text, voice, onAudioChunk, {onDone, onError}) → void
 stop() → void                       // Abort current request
 destroy()                           // Release resources
 ```
+`startStream()` sends `POST /v1/tts` with `{text, voice}`, returns immediately.
+PCM chunks arrive via `onAudioChunk(Float32Array, sampleRate)`. No event bus integration
+(callers wire callbacks directly).
 
-- `startStream()` sends `POST /v1/tts` with `{text, voice}`, returns immediately.
-  PCM chunks arrive via `onAudioChunk(Float32Array, sampleRate)`.
-- Debug events to EventBus: `tts-connect`, `tts-disconnect`, `tts-first-audio` (ms),
-  `tts-text-sent`, `tts-done`, `tts-error`.
-
-**Replay path:** Same `startStream()` API, same HTTP endpoint.
-Used by `ChannelPipeline.drainText()`.
+**Replay path:** Same `startStream()` API, same HTTP endpoint — the distinction is
+audio mode: `drainText()` uses `playStream(streamFn)` (gapless scheduling) rather
+than the live path's `openStream()`.
 ### SessionStore (`session/storage.js`)
 
 Persistence with adapter seam at construction time.
@@ -215,22 +220,21 @@ store.getQuestions();     // Recent question list
 
 ### SimpleEventBus (`session/event-bus.js`)
 
-Lightweight observer for cross-module state observation. Pipeline modules emit events; the debug overlay (or any listener) subscribes. No producer knows about its consumers.
+Lightweight observer for cross-module state observation. Pipeline modules emit events; the debug overlay
+(or any listener) subscribes. No producer knows about its consumers.
+
+**Currently emitted events:**
 
 ```js
 const bus = new SimpleEventBus();
-bus.on("token", (data) => { ... });             // { modelName, token }
-bus.on("tts-chunk", (data) => { ... });         // { modelName, bytesReceived }
-bus.on("tts-first-chunk", (data) => { ... });   // { modelName, latencyMs }
-bus.on("tts-text-sent", (data) => { ... });     // { modelName, chars, words }
-bus.on("tts-done", (data) => { ... });          // { modelName }
-bus.on("tts-error", (data) => { ... });         // { modelName, message }
-bus.on("tts-reconnect", (data) => { ... });     // { modelName } — TTS reconnected, audio re-init
-bus.on("tts-text-dropped", (data) => { ... });  // { modelName, reason, chars } — text lost to closed stream
+bus.on("token", (data) => { ... });             // { modelName, token } — per LLM token
 bus.on("pipeline-progress", (data) => { ... }); // { modelName, stage }
 bus.on("pipeline-error", (data) => { ... });    // { modelName, message, timestamp }
-bus.emit("token", { modelName: "Qwen", token: "h" });
 ```
+
+The DebugOverlay additionally subscribes to TTS lifecycle events (`tts-connect`, `tts-disconnect`,
+`tts-first-chunk`, `tts-chunk`, `tts-done`, `tts-text-sent`) — these are wired at the subscription
+level for future TTS instrumentation and show placeholder values when no events have fired.
 
 ### DebugOverlay (`ui/debug-overlay.js`)
 
@@ -263,10 +267,11 @@ channel.openStream()                 // New: live async PCM feed
 channel.analyser / channel.gain / channel.stopAll
 ```
 
-**`openStream()` mode (live path):** `feed(pcm, sampleRate)` creates and schedules an
-AudioBufferSourceNode from PCM data — called asynchronously from HTTP response stream.
-`end()` signals no more frames coming. `stop()` kills all sources immediately.
-Shares ducking and `activeCount` with `playStream`.
+**`openStream()` mode (live path):** Accumulates the first `PRE_BUFFER_FRAMES=1` PCM chunk
+before starting playback — giving a single-frame cushion that absorbs HTTP delivery jitter
+while keeping latency imperceptible. `feed(pcm, sampleRate)` schedules each chunk gaplessly
+via `AudioBufferSourceNode`. `end()` signals no more frames. `stop()` kills all sources
+immediately. Shares ducking and `activeCount` with `playStream`.
 
 ### Waveform Visualization (`audio/waveform.js`)
 
@@ -282,19 +287,14 @@ TTS's sentence-level HTTP delivery.
 Managed by Orchestrator. All state transitions flow through `orchestrator.onStateChange()`.
 
 ```
-Idle ──► Loading ──► Checking ──► Thinking ──► Speaking ──► Done ──► Idle
-  │         │           │             │            │
-  │         │           │             │            └─► (save to SessionStore, reset)
-  │         │           │             │
-  │         │           │             └─► (all streams ended, TTS still playing)
-  │         │           │
-  │         │           └─► (health-check providers)
-  │         │
-  │         └─► (HTTP health check to Pocket TTS server)
+                          ┌─► Error: TTS server unreachable ──► (3s auto-stop) ──► Idle
+Idle ──► Loading ────────┤
+  │     (TTS health)     └─► Checking ──┬─► Thinking ──► Speaking ──► Done ──► Idle
+  │                         (LLM ping)  │
+  │                                     └─► Error: No LLM reachable ──► (3s auto-stop) ──► Idle
   │
-  └─── Stop ──► Done ──► Idle (immediate kill: abort HTTP requests, stop audio, fresh slate)
+  └─── Stop ──────────────► Done ──► Idle (immediate kill: abort HTTP, stop audio, fresh slate)
 ```
-
 ## File Inventory
 
 | File | Responsibility | Depth |
@@ -337,7 +337,7 @@ Idle ──► Loading ──► Checking ──► Thinking ──► Speaking 
 | `vite-env.d.ts` | Vite/CSS module type declarations | Shallow (types) |
 | `.gitignore` | Ignored files (node_modules, .env, scratch) | Shallow (config) |
 | `.env` | Legacy CLI script vars (not read by browser app) | Shallow (config) |
-| `test/` | Node test runner suites (91 tests, 14 suites) | Shallow (test) |
+| `test/` | Node test runner suites (90 tests, 14 suites) | Shallow (test) |
 | `ui/debug-overlay.js` | Togglable pipeline diagnostics panel | Deep |
 | `ui/debug-overlay.css` | Debug overlay styling | Shallow (style) |
 
@@ -361,9 +361,10 @@ npm test
 | `llm-stream.test.js` | 4 | Endpoint construction with/without trailing slashes |
 | `openai-compatible-provider.test.js` | 9 | Separate/tagged/none reasoning formats, URL construction, retry, abort |
 | `orchestrator.test.js` | 3 | stop() → Idle transition, no-save after stop, monologue sequencing |
-| `channel-pipeline.test.js` | 17 | Empty LLM stream detection, sentence streaming, sequential playback, token cap, content boundary, softStop isolation, reconnect recovery, resume/replay, replay guard |
-| `audio-graph-stream.test.js` | 7 | playStream PCM playback, scheduling, ducking, stop; openStream feed/end/stop/ducking |
-| `text-chunker.test.js` | 18 | Punctuation (incl. comma), max-words, timeout, min-words guard, disabled punctuation, manual/reset |
+| `channel-pipeline.test.js` | 17 | Empty LLM stream, sentence streaming, sequential playback, token cap, content boundary, softStop isolation, reconnect recovery, resume, replay guard |
+| `audio-graph-stream.test.js` | 19 | playStream PCM playback/scheduling/ducking/stop (7); openStream feed/end/stop/ducking/pre-buffer (12) |
+| `pocket-tts-backend.test.js` | 16 | load() health check (4); startStream HTTP POST/chunk delivery/PCM decode (6); stop() abort (3); destroy() cleanup (2); concurrent calls (1) |
+| `text-chunker.test.js` | 18 | Punctuation (incl. comma), max-words, timeout, min-words guard, disabled punctuation, manual flush, reset, multiple sentences |
 
 ### Testable modules (for new tests)
 
