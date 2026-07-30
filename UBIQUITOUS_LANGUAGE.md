@@ -30,11 +30,13 @@
 | **Reasoning format** | How the provider separates reasoning from final answer: `separate` (dedicated field), `tagged` (`<think>` tags), or `none` (no separation) | Format mode, parsing mode |
 | **Reasoning content** | The raw text of the LLM's reasoning, streamed token by token | Thinking block, thought stream, reasoning stream |
 | **Final answer** | The LLM's polished output — the `content` field in the API response. Deliberately suppressed. | Response, output, answer, completion |
-| **Content boundary** | The point in the stream where the LLM transitions from reasoning to final answer | Cut point, answer start, switch |
+| **Content boundary** | The point in the stream where the LLM transitions from reasoning to final answer. Deliberately suppressed — only reasoning is displayed and spoken. | Cut point, answer start, switch |
 | **Streaming** | Receiving LLM output token-by-token via SSE as it is generated | Live, real-time, chunked |
 | **Token** | A single unit of text from the LLM stream (sub-word or punctuation) | Piece, fragment, chunk (when referring to text, not audio) |
 **Token cap** | The maximum word count (configurable, default 200 via `maxTokens`) after which no new text is fed to TTS. Reasoning text continues accumulating in the pipeline for storage. | Speech limit, TTS cutoff, word budget |
-| **System prompt** | The instruction given to all models before the question (e.g. "You are a critical thinker") | System message, preamble, context |
+| **System prompt** | The instruction given to a model before the question, shaping its reasoning style. Each model has its own `systemPrompt` in config; falls back to the global `config.systemPrompt` if absent. | System message, preamble, context |
+| **Label** | The UI column header text displayed instead of the internal model name. Set via `label` in `ModelConfig`; falls back to `name` if absent. Currently "释·Buddhism", "儒·Confucianism", "道·Daoism". | Display name, heading, title |
+| **Role** | The philosophical persona assigned via a model's `systemPrompt`. The three roles are **Buddhism** (deconstructive, Chan Buddhist), **Confucianism** (relational, Confucian scholar), and **Daoism** (paradoxical, Daoist recluse). | Persona, character, voice (abstract) |
 
 ## TTS and audio domain
 

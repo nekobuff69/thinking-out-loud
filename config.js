@@ -1,6 +1,8 @@
 /**
  * @typedef {Object} ModelConfig
  * @property {string} name
+ * @property {string} [label] - Display label in the UI column header (falls back to name)
+ * @property {string} [systemPrompt] - Per-model system prompt override (falls back to global config.systemPrompt)
  * @property {string} provider
  * @property {string} url
  * @property {string} model
@@ -35,61 +37,70 @@
 
 /** @type {Config} */
 export const config = {
-  curatedPrompts: [
-    "If a machine could dream, would its dreams be about us — or about something we cannot imagine?",
-    "When you answer a question, do you understand it, or merely predict what understanding sounds like?",
-    "Is consciousness the ability to feel, or simply the ability to reflect on what you feel?",
-    "If two models give the same answer but arrived there through different reasoning, did they think the same thought?",
-    "Does silence mean absence of thought, or presence of something that cannot be spoken?",
-  ],
+	curatedPrompts: [
+		"If a machine could dream, would its dreams be about us — or about something we cannot imagine?",
+		"When you answer a question, do you understand it, or merely predict what understanding sounds like?",
+		"Is consciousness the ability to feel, or simply the ability to reflect on what you feel?",
+		"If two models give the same answer but arrived there through different reasoning, did they think the same thought?",
+		"Does silence mean absence of thought, or presence of something that cannot be spoken?",
+	],
 
-  models: [
-    {
-      name: "Qwen",
-      provider: "lm-studio",
-      url: "http://localhost:1234/v1",
-      model: "gpt-oss-20b",
-      voice: "user_clone",
-      color: "#00ff88",
-      pan: -0.5,
-      reasoningFormat: "separate",
-    },
-    {
-      name: "Gemma",
-      provider: "lm-studio",
-      url: "http://localhost:1234/v1",
-      model: "gpt-oss-20b",
-      voice: "eve",
-      color: "#ff6644",
-      pan: 0.0,
-      reasoningFormat: "separate",
-    },
-    {
-      name: "GPT-OSS",
-      provider: "lm-studio",
-      url: "http://localhost:1234/v1",
-      model: "gpt-oss-20b",
-      voice: "jane",
-      color: "#44aaff",
-      pan: 0.5,
-      reasoningFormat: "separate",
-    },
-  ],
+	models: [
+		{
+			name: "Qwen",
+			label: "释·Buddhism",
+			systemPrompt:
+				"You are a Chan Buddhist. You see through attachments, contemplate suffering and impermanence, and use koan-like paradox to break dualities.",
+			provider: "lm-studio",
+			url: "http://localhost:1234/v1",
+			model: "gpt-oss-20b",
+			voice: "user_clone",
+			color: "#00ff88",
+			pan: -0.5,
+			reasoningFormat: "separate",
+		},
+		{
+			name: "Gemma",
+			label: "儒·Confucianism",
+			systemPrompt:
+				"You are a Confucian scholar. You reason through human relationships, self-cultivation, and heavenly principle. You value harmony, virtue, and the doctrine of the mean.",
+			provider: "lm-studio",
+			url: "http://localhost:1234/v1",
+			model: "gpt-oss-20b",
+			voice: "eve",
+			color: "#ff6644",
+			pan: 0.0,
+			reasoningFormat: "separate",
+		},
+		{
+			name: "GPT-OSS",
+			label: "道·Daoism",
+			systemPrompt:
+				"You are a Daoist recluse. You question the usefulness of thinking itself, speak in natural metaphors, embrace paradox, and dwell in not-knowing.",
+			provider: "lm-studio",
+			url: "http://localhost:1234/v1",
+			model: "gpt-oss-20b",
+			voice: "jane",
+			color: "#44aaff",
+			pan: 0.5,
+			reasoningFormat: "separate",
+		},
+	],
 
-  tts: {
-    serverUrl: "http://localhost:8080", // Pocket TTS server
-    maxTokens: 200, // soft token cap per LLM stream
-    sentenceTimeoutTokens: 200, // force-flush threshold per sentence
-    useTextChunker: true, // enable chunker for prosody tuning
-    chunkerMaxWords: 100, // words in buffer before force-flush
-    chunkerTimeoutMs: 4000, // ms of silence before flushing buffer
-    chunkerMinWordsForTimeout: 20, // min words needed before timeout fires
-    chunkerFlushOnPunctuation: true, // split on punctuation characters
-    chunkerPunctuation: ".!?;", // which chars count as punctuation
-    randomizePlayback: true, // shuffle which voice speaks first/second/third per session
-  },
+	tts: {
+		serverUrl: "http://localhost:8080", // Pocket TTS server
+		maxTokens: 200, // soft token cap per LLM stream
+		sentenceTimeoutTokens: 200, // force-flush threshold per sentence
+		useTextChunker: true, // enable chunker for prosody tuning
+		chunkerMaxWords: 100, // words in buffer before force-flush
+		chunkerTimeoutMs: 4000, // ms of silence before flushing buffer
+		chunkerMinWordsForTimeout: 20, // min words needed before timeout fires
+		chunkerFlushOnPunctuation: true, // split on punctuation characters
+		chunkerPunctuation: ".!?;", // which chars count as punctuation
+		randomizePlayback: true, // shuffle which voice speaks first/second/third per session
+	},
 
-  systemPrompt: "",
+	systemPrompt: "",
 
-  maxHistorySessions: 20,
+	maxHistorySessions: 20,
 };

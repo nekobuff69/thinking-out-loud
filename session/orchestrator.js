@@ -30,456 +30,493 @@ import { TextChunker } from "../tts/text-chunker.js";
  * Supports replay of stored sessions.
  */
 export class Orchestrator {
-  /** @type {ModelConfig[]} */
-  #models;
-  /** @type {string} */
-  #systemPrompt;
-  /** @type {TTSConfig} */
-  #ttsConfig;
-  /** @type {AudioGraph} */
-  #audioGraph;
-  /** @type {Map<string, ColumnAPI>} */
-  #columns;
-  /** @type {Map<string, import("../tts/tts-engine.js").TTSEngine>} */
-  #ttsEngines;
-  /** @type {((state: string) => void) | null} */
-  #onStateChange = null;
-  /** @type {string} */
-  #state = "Idle";
-  /** @type {Map<string, ChannelPipeline>} */
-  #activeSessions = new Map();
-  /** @type {number} */
-  #monologueIndex = 0;
-  /** @type {boolean} */
-  #allStreamsDone = false;
-  /** @type {SessionStore} */
-  #storage;
-  /** @type {SessionData | null} */
-  #sessionData = null;
-  /** @type {string} */
-  #questionText = "";
-  /** @type {import("./event-bus.js").SimpleEventBus | undefined} */
-  #eventBus;
-  /** @type {((bus: import("./event-bus.js").SimpleEventBus) => void) | null} */
-  #onEventBusReady = null;
-  /** @type {Map<string, import("../llm/providers/llm-provider.js").LLMProvider>} */
-  #providerCache = new Map();
-  /** @type {Set<string>} */
-  #muted = new Set();
-  /** @type {Set<string>} */
-  #soloed = new Set();
-  /** @type {Map<string, { muteGain: GainNode, setAudible: (v: boolean) => void }>} */
-  #channelGains = new Map();
+	/** @type {ModelConfig[]} */
+	#models;
+	/** @type {string} */
+	#systemPrompt;
+	/** @type {TTSConfig} */
+	#ttsConfig;
+	/** @type {AudioGraph} */
+	#audioGraph;
+	/** @type {Map<string, ColumnAPI>} */
+	#columns;
+	/** @type {Map<string, import("../tts/tts-engine.js").TTSEngine>} */
+	#ttsEngines;
+	/** @type {((state: string) => void) | null} */
+	#onStateChange = null;
+	/** @type {string} */
+	#state = "Idle";
+	/** @type {Map<string, ChannelPipeline>} */
+	#activeSessions = new Map();
+	/** @type {number} */
+	#monologueIndex = 0;
+	/** @type {boolean} */
+	#allStreamsDone = false;
+	/** @type {SessionStore} */
+	#storage;
+	/** @type {SessionData | null} */
+	#sessionData = null;
+	/** @type {string} */
+	#questionText = "";
+	/** @type {import("./event-bus.js").SimpleEventBus | undefined} */
+	#eventBus;
+	/** @type {((bus: import("./event-bus.js").SimpleEventBus) => void) | null} */
+	#onEventBusReady = null;
+	/** @type {Map<string, import("../llm/providers/llm-provider.js").LLMProvider>} */
+	#providerCache = new Map();
+	/** @type {Set<string>} */
+	#muted = new Set();
+	/** @type {Set<string>} */
+	#soloed = new Set();
+	/** @type {Map<string, { muteGain: GainNode, setAudible: (v: boolean) => void }>} */
+	#channelGains = new Map();
 
-  /**
-   * @param {OrchestratorDeps} deps
-   */
-  constructor({ models, systemPrompt, ttsConfig, audioGraph, columns, ttsEngines, storage }) {
-    this.#models = models;
-    this.#systemPrompt = systemPrompt;
-    this.#ttsConfig = ttsConfig;
-    this.#audioGraph = audioGraph;
-    this.#columns = columns;
-    this.#ttsEngines = ttsEngines;
-    this.#storage = storage;
-  }
+	/**
+	 * @param {OrchestratorDeps} deps
+	 */
+	constructor({
+		models,
+		systemPrompt,
+		ttsConfig,
+		audioGraph,
+		columns,
+		ttsEngines,
+		storage,
+	}) {
+		this.#models = models;
+		this.#systemPrompt = systemPrompt;
+		this.#ttsConfig = ttsConfig;
+		this.#audioGraph = audioGraph;
+		this.#columns = columns;
+		this.#ttsEngines = ttsEngines;
+		this.#storage = storage;
+	}
 
-  /**
-   * @param {(state: string) => void} fn
-   * @returns {void}
-   */
-  onStateChange(fn) {
-    this.#onStateChange = fn;
-  }
+	/**
+	 * @param {(state: string) => void} fn
+	 * @returns {void}
+	 */
+	onStateChange(fn) {
+		this.#onStateChange = fn;
+	}
 
-  /** @returns {string} */
-  get state() {
-    return this.#state;
-  }
+	/** @returns {string} */
+	get state() {
+		return this.#state;
+	}
 
-  /** @returns {import("./event-bus.js").SimpleEventBus | undefined} */
-  get eventBus() {
-    return this.#eventBus;
-  }
+	/** @returns {import("./event-bus.js").SimpleEventBus | undefined} */
+	get eventBus() {
+		return this.#eventBus;
+	}
 
-  /**
-   * Register a callback that fires each time a new event bus is created.
-   * @param {(bus: import("./event-bus.js").SimpleEventBus) => void} fn
-   * @returns {void}
-   */
-  setOnEventBusReady(fn) {
-    this.#onEventBusReady = fn;
-    if (this.#eventBus) fn(this.#eventBus);
-  }
+	/**
+	 * Register a callback that fires each time a new event bus is created.
+	 * @param {(bus: import("./event-bus.js").SimpleEventBus) => void} fn
+	 * @returns {void}
+	 */
+	setOnEventBusReady(fn) {
+		this.#onEventBusReady = fn;
+		if (this.#eventBus) fn(this.#eventBus);
+	}
 
-  /**
-   * @param {string} question
-   * @returns {Promise<void>}
-   */
-  async start(question) {
-    if (this.#state !== "Idle") return;
-    this.#questionText = question;
-    this.#monologueIndex = 0;
-    this.#allStreamsDone = false;
-    this.#audioGraph.clearChannels();
-    this.#setState("Loading");
+	/**
+	 * @param {string} question
+	 * @returns {Promise<void>}
+	 */
+	async start(question) {
+		if (this.#state !== "Idle") return;
+		this.#questionText = question;
+		this.#monologueIndex = 0;
+		this.#allStreamsDone = false;
+		this.#audioGraph.clearChannels();
+		this.#setState("Loading");
 
-    this.#setState("Loading: connecting to TTS server…");
-    try {
-      await Promise.all(
-        [...this.#ttsEngines.values()].map((e) => e.load())
-      );
-    } catch (err) {
-      this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.serverUrl || "http://localhost:8765"}`);
-      return;
-    }
-    this.#activeSessions.clear();
-    this.#eventBus = new SimpleEventBus();
-    this.#onEventBusReady?.(this.#eventBus);
-    this.#sessionData = {
-      id: crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
-      question,
-      mode: "monologue",
-      models: [],
-    };
+		this.#setState("Loading: connecting to TTS server…");
+		try {
+			await Promise.all([...this.#ttsEngines.values()].map((e) => e.load()));
+		} catch (err) {
+			this.#setState(
+				`Error: TTS server unreachable at ${this.#ttsConfig.serverUrl || "http://localhost:8765"}`,
+			);
+			return;
+		}
+		this.#activeSessions.clear();
+		this.#eventBus = new SimpleEventBus();
+		this.#onEventBusReady?.(this.#eventBus);
+		this.#sessionData = {
+			id: crypto.randomUUID(),
+			timestamp: new Date().toISOString(),
+			question,
+			mode: "monologue",
+			models: [],
+		};
 
-    // Health check all models concurrently
-    this.#setState("Checking");
-    const healthResults = await Promise.all(
-      this.#models.map(async (m) => ({ model: m, ok: await healthCheck(m.url) }))
-    );
+		// Health check all models concurrently
+		this.#setState("Checking");
+		const healthResults = await Promise.all(
+			this.#models.map(async (m) => ({
+				model: m,
+				ok: await healthCheck(m.url),
+			})),
+		);
 
-    const reachableModels = healthResults.filter((r) => r.ok).map((r) => r.model);
-    const unreachableModels = healthResults.filter((r) => !r.ok).map((r) => r.model);
+		const reachableModels = healthResults
+			.filter((r) => r.ok)
+			.map((r) => r.model);
+		const unreachableModels = healthResults
+			.filter((r) => !r.ok)
+			.map((r) => r.model);
 
-    // If all models unreachable — blocking error
-    if (reachableModels.length === 0) {
-      for (const model of this.#models) {
-        const column = this.#columns.get(model.name);
-        column?.setError(`${model.name} — unavailable`);
-      }
-      this.#setState("Error: No LLM providers reachable");
-      return;
-    }
+		// If all models unreachable — blocking error
+		if (reachableModels.length === 0) {
+			for (const model of this.#models) {
+				const column = this.#columns.get(model.name);
+				column?.setError(`${model.name} — unavailable`);
+			}
+			this.#setState("Error: No LLM providers reachable");
+			return;
+		}
 
-    // Mark unreachable model columns with error
-    for (const model of unreachableModels) {
-      const column = this.#columns.get(model.name);
-      column?.setError(`${model.name} — unavailable`);
-    }
-    // Randomize TTS playback order per session if configured
-    if (this.#ttsConfig.randomizePlayback && reachableModels.length > 1) {
-      this.#shuffleArray(reachableModels);
-    }
-    this.#sessionData.playbackOrder = reachableModels.map((m) => m.name);
+		// Mark unreachable model columns with error
+		for (const model of unreachableModels) {
+			const column = this.#columns.get(model.name);
+			column?.setError(`${model.name} — unavailable`);
+		}
+		// Randomize TTS playback order per session if configured
+		if (this.#ttsConfig.randomizePlayback && reachableModels.length > 1) {
+			this.#shuffleArray(reachableModels);
+		}
+		this.#sessionData.playbackOrder = reachableModels.map((m) => m.name);
 
-    // Set up pipelines only for reachable models
-    this.#setupPipelines(reachableModels);
+		// Set up pipelines only for reachable models
+		this.#setupPipelines(reachableModels);
 
-    // Fire all LLM streams concurrently
-    this.#setState("Thinking");
-    const fetches = [];
+		// Fire all LLM streams concurrently
+		this.#setState("Thinking");
+		const fetches = [];
 
-    for (const pipeline of this.#activeSessions.values()) {
-      fetches.push(
-        pipeline.startStream(this.#systemPrompt, question).catch((err) => {
-          if (err instanceof Error && err.name !== "AbortError") {
-            console.error(`Stream error for ${pipeline.modelName}:`, err);
-          }
-          return err;
-        })
-      );
-    }
+		for (const [name, pipeline] of this.#activeSessions) {
+			const model = this.#models.find((m) => m.name === name);
+			const systemPrompt = model?.systemPrompt ?? this.#systemPrompt;
+			fetches.push(
+				pipeline.startStream(systemPrompt, question).catch((err) => {
+					if (err instanceof Error && err.name !== "AbortError") {
+						console.error(`Stream error for ${pipeline.modelName}:`, err);
+					}
+					return err;
+				}),
+			);
+		}
 
-    await Promise.all(fetches);
-    this.#allStreamsDone = true;
+		await Promise.all(fetches);
+		this.#allStreamsDone = true;
 
-    // All streams done — check if TTS is still playing
-    if ([...this.#activeSessions.values()].some((p) => p.isActive)) {
-      this.#setState("Speaking");
-    } else {
-      this.#finishSession();
-    }
-  }
+		// All streams done — check if TTS is still playing
+		if ([...this.#activeSessions.values()].some((p) => p.isActive)) {
+			this.#setState("Speaking");
+		} else {
+			this.#finishSession();
+		}
+	}
 
-  /**
-   * @param {SessionData} sessionData
-   * @returns {Promise<void>}
-   */
-  async replay(sessionData) {
-    if (this.#state !== "Idle") return;
-    this.#questionText = sessionData.question;
-    this.#monologueIndex = 0;
-    this.#allStreamsDone = false;
-    this.#audioGraph.clearChannels();
-    this.#setState("Loading");
+	/**
+	 * @param {SessionData} sessionData
+	 * @returns {Promise<void>}
+	 */
+	async replay(sessionData) {
+		if (this.#state !== "Idle") return;
+		this.#questionText = sessionData.question;
+		this.#monologueIndex = 0;
+		this.#allStreamsDone = false;
+		this.#audioGraph.clearChannels();
+		this.#setState("Loading");
 
-    this.#setState("Loading: connecting to TTS server…");
-    try {
-      await Promise.all(
-        [...this.#ttsEngines.values()].map((e) => e.load())
-      );
-    } catch (err) {
-      this.#setState(`Error: TTS server unreachable at ${this.#ttsConfig.serverUrl || "http://localhost:8765"}`);
-      return;
-    }
-    this.#activeSessions.clear();
-    this.#eventBus = new SimpleEventBus();
-    this.#onEventBusReady?.(this.#eventBus);
-    this.#sessionData = { ...sessionData, id: crypto.randomUUID(), timestamp: new Date().toISOString() };
+		this.#setState("Loading: connecting to TTS server…");
+		try {
+			await Promise.all([...this.#ttsEngines.values()].map((e) => e.load()));
+		} catch (err) {
+			this.#setState(
+				`Error: TTS server unreachable at ${this.#ttsConfig.serverUrl || "http://localhost:8765"}`,
+			);
+			return;
+		}
+		this.#activeSessions.clear();
+		this.#eventBus = new SimpleEventBus();
+		this.#onEventBusReady?.(this.#eventBus);
+		this.#sessionData = {
+			...sessionData,
+			id: crypto.randomUUID(),
+			timestamp: new Date().toISOString(),
+		};
 
-    // Use stored model data (preserving original voices/pan) for replay,
-    // but merge with current config to get url/model/reasoningFormat for provider
-    const modelsForReplay = sessionData.models.map((stored) => {
-      const configModel = this.#models.find((m) => m.name === stored.name);
-      return configModel ? { ...configModel, ...stored } : stored;
-    });
-    // Preserve stored playback order (for sessions with randomized playback)
-    if (sessionData.playbackOrder) {
-      const orderMap = new Map(sessionData.playbackOrder.map((name, i) => [name, i]));
-      modelsForReplay.sort((a, b) => (orderMap.get(a.name) ?? 99) - (orderMap.get(b.name) ?? 99));
-    }
-    this.#setupPipelines(/** @type {ModelConfig[]} */ (/** @type {unknown} */ (modelsForReplay)));
+		// Use stored model data (preserving original voices/pan) for replay,
+		// but merge with current config to get url/model/reasoningFormat for provider
+		const modelsForReplay = sessionData.models.map((stored) => {
+			const configModel = this.#models.find((m) => m.name === stored.name);
+			return configModel ? { ...configModel, ...stored } : stored;
+		});
+		// Preserve stored playback order (for sessions with randomized playback)
+		if (sessionData.playbackOrder) {
+			const orderMap = new Map(
+				sessionData.playbackOrder.map((name, i) => [name, i]),
+			);
+			modelsForReplay.sort(
+				(a, b) => (orderMap.get(a.name) ?? 99) - (orderMap.get(b.name) ?? 99),
+			);
+		}
+		this.#setupPipelines(
+			/** @type {ModelConfig[]} */ (/** @type {unknown} */ (modelsForReplay)),
+		);
 
-    // Feed stored reasoning text into each model's pipeline concurrently
-    this.#setState("Thinking");
+		// Feed stored reasoning text into each model's pipeline concurrently
+		this.#setState("Thinking");
 
-    const textFeeds = [];
-    for (const modelData of sessionData.models) {
-      const pipeline = this.#activeSessions.get(modelData.name);
-      if (!pipeline) continue;
-      const fullText = modelData.reasoningText || "";
-      textFeeds.push(pipeline.drainText(fullText));
-    }
+		const textFeeds = [];
+		for (const modelData of sessionData.models) {
+			const pipeline = this.#activeSessions.get(modelData.name);
+			if (!pipeline) continue;
+			const fullText = modelData.reasoningText || "";
+			textFeeds.push(pipeline.drainText(fullText));
+		}
 
-    await Promise.all(textFeeds);
+		await Promise.all(textFeeds);
 
-    this.#allStreamsDone = true;
+		this.#allStreamsDone = true;
 
-    // Check if TTS is still playing
-    if ([...this.#activeSessions.values()].some((p) => p.isActive)) {
-      this.#setState("Speaking");
-    } else {
-      this.#finishSession();
-    }
-  }
+		// Check if TTS is still playing
+		if ([...this.#activeSessions.values()].some((p) => p.isActive)) {
+			this.#setState("Speaking");
+		} else {
+			this.#finishSession();
+		}
+	}
 
-  /**
-   * @param {ModelConfig[] | undefined} [modelsToUse]
-   * @returns {void}
-   */
-  #setupPipelines(modelsToUse) {
-    if (!this.#sessionData) return;
-    const models = modelsToUse || this.#models;
-    let index = 0;
-    for (const model of /** @type {Array<import("../config.js").ModelConfig>} */ (models)) {
-      const column = this.#columns.get(model.name);
-      if (!column) continue;
-      column.clear();
+	/**
+	 * @param {ModelConfig[] | undefined} [modelsToUse]
+	 * @returns {void}
+	 */
+	#setupPipelines(modelsToUse) {
+		if (!this.#sessionData) return;
+		const models = modelsToUse || this.#models;
+		let index = 0;
+		for (const model of /** @type {Array<import("../config.js").ModelConfig>} */ (
+			models
+		)) {
+			const column = this.#columns.get(model.name);
+			if (!column) continue;
+			column.clear();
 
-      const cacheKey = `${model.url}|${model.model}|${model.reasoningFormat ?? "separate"}`;
-      let llmProvider = this.#providerCache.get(cacheKey);
-      if (!llmProvider) {
-        llmProvider = new OpenAICompatibleProvider({
-          url: model.url,
-          model: model.model,
-          reasoningFormat: /** @type {"separate" | "tagged" | "none"} */ (model.reasoningFormat ?? "separate"),
-        });
-        this.#providerCache.set(cacheKey, llmProvider);
-      }
+			const cacheKey = `${model.url}|${model.model}|${model.reasoningFormat ?? "separate"}`;
+			let llmProvider = this.#providerCache.get(cacheKey);
+			if (!llmProvider) {
+				llmProvider = new OpenAICompatibleProvider({
+					url: model.url,
+					model: model.model,
+					reasoningFormat: /** @type {"separate" | "tagged" | "none"} */ (
+						model.reasoningFormat ?? "separate"
+					),
+				});
+				this.#providerCache.set(cacheKey, llmProvider);
+			}
 
-      const ttsEngine = this.#ttsEngines.get(model.name);
-      if (!ttsEngine) continue;
+			const ttsEngine = this.#ttsEngines.get(model.name);
+			if (!ttsEngine) continue;
 
-      const pipeline = new ChannelPipeline({
-        model: /** @type {ModelConfig} */ (model),
-        ttsConfig: this.#ttsConfig,
-        column,
-        ttsEngine,
-        llmProvider,
-        audioGraph: this.#audioGraph,
-        eventBus: this.#eventBus,
-        onIdle: () => {
-          this.#advanceMonologue();
-          this.#checkAllDone();
-        },
-      });
+			const pipeline = new ChannelPipeline({
+				model: /** @type {ModelConfig} */ (model),
+				ttsConfig: this.#ttsConfig,
+				column,
+				ttsEngine,
+				llmProvider,
+				audioGraph: this.#audioGraph,
+				eventBus: this.#eventBus,
+				onIdle: () => {
+					this.#advanceMonologue();
+					this.#checkAllDone();
+				},
+			});
 
-      pipeline.createChannel();
-      // Store channel gain info for mute/solo control
-      const ch = pipeline.channel;
-      if (ch) {
-        this.#channelGains.set(model.name, {
-          muteGain: ch.muteGain,
-          setAudible: ch.setAudible,
-        });
-      }
+			pipeline.createChannel();
+			// Store channel gain info for mute/solo control
+			const ch = pipeline.channel;
+			if (ch) {
+				this.#channelGains.set(model.name, {
+					muteGain: ch.muteGain,
+					setAudible: ch.setAudible,
+				});
+			}
 
-      // Wire TextChunker if enabled in config
-      if (this.#ttsConfig.useTextChunker) {
-        const chunker = new TextChunker({
-          maxWords: this.#ttsConfig.chunkerMaxWords ?? 15,
-          timeoutMs: this.#ttsConfig.chunkerTimeoutMs ?? 2000,
-          minWordsForTimeout: this.#ttsConfig.chunkerMinWordsForTimeout ?? 3,
-          punctuation: this.#ttsConfig.chunkerPunctuation ?? ".!?;,",
-          flushOnPunctuation: this.#ttsConfig.chunkerFlushOnPunctuation ?? true,
-          onFlush: (text) => pipeline.flushTts(text),
-        });
-        pipeline.setTextChunker(chunker);
-      }
+			// Wire TextChunker if enabled in config
+			if (this.#ttsConfig.useTextChunker) {
+				const chunker = new TextChunker({
+					maxWords: this.#ttsConfig.chunkerMaxWords ?? 15,
+					timeoutMs: this.#ttsConfig.chunkerTimeoutMs ?? 2000,
+					minWordsForTimeout: this.#ttsConfig.chunkerMinWordsForTimeout ?? 3,
+					punctuation: this.#ttsConfig.chunkerPunctuation ?? ".!?;,",
+					flushOnPunctuation: this.#ttsConfig.chunkerFlushOnPunctuation ?? true,
+					onFlush: (text) => pipeline.flushTts(text),
+				});
+				pipeline.setTextChunker(chunker);
+			}
 
-      // Pause all pipelines except the first (sequential playback)
-      if (index > 0) {
-        pipeline.pause();
-      }
+			// Pause all pipelines except the first (sequential playback)
+			if (index > 0) {
+				pipeline.pause();
+			}
 
-      this.#activeSessions.set(model.name, pipeline);
+			this.#activeSessions.set(model.name, pipeline);
 
-      // Initialize model data for session storage (skip if already present, e.g. replay)
-      if (!this.#sessionData.models.some((m) => m.name === model.name)) {
-        this.#sessionData.models.push({
-          name: model.name,
-          displayName: model.name,
-          color: model.color,
-          voice: model.voice,
-          pan: model.pan,
-          reasoningText: "",
-        });
-      }
+			// Initialize model data for session storage (skip if already present, e.g. replay)
+			if (!this.#sessionData.models.some((m) => m.name === model.name)) {
+				this.#sessionData.models.push({
+					name: model.name,
+					displayName: model.name,
+					color: model.color,
+					voice: model.voice,
+					pan: model.pan,
+					reasoningText: "",
+				});
+			}
 
-      index++;
-    }
-  }
+			index++;
+		}
+	}
 
-  #advanceMonologue() {
-    const sessionKeys = [...this.#activeSessions.keys()];
-    this.#monologueIndex++;
-    if (this.#monologueIndex < sessionKeys.length) {
-      const nextPipeline = this.#activeSessions.get(sessionKeys[this.#monologueIndex]);
-      if (nextPipeline) {
-        nextPipeline.resume();
-      }
-    }
-  }
+	#advanceMonologue() {
+		const sessionKeys = [...this.#activeSessions.keys()];
+		this.#monologueIndex++;
+		if (this.#monologueIndex < sessionKeys.length) {
+			const nextPipeline = this.#activeSessions.get(
+				sessionKeys[this.#monologueIndex],
+			);
+			if (nextPipeline) {
+				nextPipeline.resume();
+			}
+		}
+	}
 
-  #checkAllDone() {
-    if (this.#state === "Done") return;
+	#checkAllDone() {
+		if (this.#state === "Done") return;
 
-    // Only consider done when the last model's pipeline finishes
-    const sessionKeys = [...this.#activeSessions.keys()];
-    const lastModel = sessionKeys[sessionKeys.length - 1];
-    const lastPipeline = this.#activeSessions.get(lastModel);
-    if (this.#allStreamsDone && lastPipeline && !lastPipeline.isActive) {
-      this.#finishSession();
-    }
-  }
+		// Only consider done when the last model's pipeline finishes
+		const sessionKeys = [...this.#activeSessions.keys()];
+		const lastModel = sessionKeys[sessionKeys.length - 1];
+		const lastPipeline = this.#activeSessions.get(lastModel);
+		if (this.#allStreamsDone && lastPipeline && !lastPipeline.isActive) {
+			this.#finishSession();
+		}
+	}
 
-  #finishSession() {
-    if (!this.#sessionData) return;
-    // Update stored reasoning text from pipeline state
-    for (const [name, pipeline] of this.#activeSessions) {
-      const modelData = this.#sessionData.models.find((m) => m.name === name);
-      if (modelData) {
-        modelData.reasoningText = pipeline.reasoningText;
-      }
-    }
+	#finishSession() {
+		if (!this.#sessionData) return;
+		// Update stored reasoning text from pipeline state
+		for (const [name, pipeline] of this.#activeSessions) {
+			const modelData = this.#sessionData.models.find((m) => m.name === name);
+			if (modelData) {
+				modelData.reasoningText = pipeline.reasoningText;
+			}
+		}
 
-    // Save to storage
-    this.#storage?.save(this.#sessionData);
-    this.#storage?.saveQuestion(this.#questionText);
+		// Save to storage
+		this.#storage?.save(this.#sessionData);
+		this.#storage?.saveQuestion(this.#questionText);
 
-    this.#setState("Done");
-    // Reset to Idle so a new session can start
-    this.#state = "Idle";
-  }
+		this.#setState("Done");
+		// Reset to Idle so a new session can start
+		this.#state = "Idle";
+	}
 
-  /**
-   * @param {string} newState
-   * @returns {void}
-   */
-  #setState(newState) {
-    this.#state = newState;
-    this.#onStateChange?.(newState);
-  }
+	/**
+	 * @param {string} newState
+	 * @returns {void}
+	 */
+	#setState(newState) {
+		this.#state = newState;
+		this.#onStateChange?.(newState);
+	}
 
-  /**
-   * Fisher-Yates shuffle in-place.
-   * @template T
-   * @param {T[]} arr
-   * @returns {void}
-   */
-  #shuffleArray(arr) {
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-  }
+	/**
+	 * Fisher-Yates shuffle in-place.
+	 * @template T
+	 * @param {T[]} arr
+	 * @returns {void}
+	 */
+	#shuffleArray(arr) {
+		for (let i = arr.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[arr[i], arr[j]] = [arr[j], arr[i]];
+		}
+	}
 
-  /** Soft stop: abort LLM streams, finish current TTS sentence, then silence. */
-  stop() {
-    for (const pipeline of this.#activeSessions.values()) {
-      pipeline.softStop();
-    }
-    this.#setState("Done");
-    this.#state = "Idle";
-  }
-  /**
-   * Toggle mute for a model.
-   * @param {string} modelName
-   * @returns {void}
-   */
-  toggleMute(modelName) {
-    if (this.#muted.has(modelName)) {
-      this.#muted.delete(modelName);
-    } else {
-      this.#muted.add(modelName);
-    }
-    this.#recomputeGains();
-  }
+	/** Soft stop: abort LLM streams, finish current TTS sentence, then silence. */
+	stop() {
+		for (const pipeline of this.#activeSessions.values()) {
+			pipeline.softStop();
+		}
+		this.#setState("Done");
+		this.#state = "Idle";
+	}
+	/**
+	 * Toggle mute for a model.
+	 * @param {string} modelName
+	 * @returns {void}
+	 */
+	toggleMute(modelName) {
+		if (this.#muted.has(modelName)) {
+			this.#muted.delete(modelName);
+		} else {
+			this.#muted.add(modelName);
+		}
+		this.#recomputeGains();
+	}
 
-  /**
-   * Toggle solo for a model.
-   * @param {string} modelName
-   * @returns {void}
-   */
-  toggleSolo(modelName) {
-    if (this.#soloed.has(modelName)) {
-      this.#soloed.delete(modelName);
-    } else {
-      this.#soloed.add(modelName);
-    }
-    this.#recomputeGains();
-  }
+	/**
+	 * Toggle solo for a model.
+	 * @param {string} modelName
+	 * @returns {void}
+	 */
+	toggleSolo(modelName) {
+		if (this.#soloed.has(modelName)) {
+			this.#soloed.delete(modelName);
+		} else {
+			this.#soloed.add(modelName);
+		}
+		this.#recomputeGains();
+	}
 
-  /**
+	/**
    * Recompute gain for all channels based on current mute/solo state.
 
    * Mute always takes effect. Solo narrows the field — only soloed channels
    * are candidates, and mute further filters within that set.
    * @returns {void}
    */
-  #recomputeGains() {
-    const hasSolo = this.#soloed.size > 0;
+	#recomputeGains() {
+		const hasSolo = this.#soloed.size > 0;
 
-    for (const [name, info] of this.#channelGains) {
-      const isSoloed = this.#soloed.has(name);
-      const isMuted = this.#muted.has(name);
+		for (const [name, info] of this.#channelGains) {
+			const isSoloed = this.#soloed.has(name);
+			const isMuted = this.#muted.has(name);
 
-      // Mute always applies; solo narrows the candidate set
-      const audible = (hasSolo ? isSoloed : true) && !isMuted;
-      const gainValue = audible ? 1.0 : 0.0;
+			// Mute always applies; solo narrows the candidate set
+			const audible = (hasSolo ? isSoloed : true) && !isMuted;
+			const gainValue = audible ? 1.0 : 0.0;
 
-      // Set gain with short ramp to avoid clicks
-      info.muteGain.gain.setTargetAtTime(gainValue, info.muteGain.context.currentTime, 0.02);
-      info.setAudible(audible);
+			// Set gain with short ramp to avoid clicks
+			info.muteGain.gain.setTargetAtTime(
+				gainValue,
+				info.muteGain.context.currentTime,
+				0.02,
+			);
+			info.setAudible(audible);
 
-      // Update column button visuals
-      const column = this.#columns.get(name);
-      if (column) {
-        column.setMuted?.(this.#muted.has(name));
-        column.setSoloed?.(this.#soloed.has(name));
-      }
-    }
-  }
+			// Update column button visuals
+			const column = this.#columns.get(name);
+			if (column) {
+				column.setMuted?.(this.#muted.has(name));
+				column.setSoloed?.(this.#soloed.has(name));
+			}
+		}
+	}
 }

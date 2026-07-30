@@ -144,7 +144,6 @@ new ChannelPipeline({ model, ttsConfig, column, ttsEngine, llmProvider, audioGra
   .isActive / .isCapped / .reasoningText / .modelName  // Getters
 ```
 
-
 **Text feeding (live path):** Tokens route through TextChunker (when enabled), which flushes on
 punctuation (`.` `!` `?` `;` — configurable, no comma by default), max words (configurable,
 default 100), or silence timeout (configurable, default 4000ms, min 20 words). Each flushed
@@ -177,6 +176,7 @@ await provider.streamReasoning(
 ```
 
 **Reasoning formats:**
+
 - `"separate"` (default): reads `delta.reasoning_content` / `delta.reasoning`
 - `"tagged"`: extracts reasoning from `<think>...</think>` tags inside `delta.content`
 - `"none"`: treats all `delta.content` as reasoning
@@ -190,6 +190,7 @@ Handles text as complete sentences via `startStream()`. No incremental text feed
 — sentences are split by TextChunker before reaching the backend.
 
 **API:**
+
 ```js
 load() → Promise<void>              // Verify server reachable (HTTP health check)
 startStream(text, voice, onAudioChunk, {onDone, onError}) → void
@@ -197,6 +198,7 @@ startStream(text, voice, onAudioChunk, {onDone, onError}) → void
 stop() → void                       // Abort current request
 destroy()                           // Release resources
 ```
+
 `startStream()` sends `POST /v1/tts` with `{text, voice}`, returns immediately.
 PCM chunks arrive via `onAudioChunk(Float32Array, sampleRate)`. No event bus integration
 (callers wire callbacks directly).
@@ -204,6 +206,7 @@ PCM chunks arrive via `onAudioChunk(Float32Array, sampleRate)`. No event bus int
 **Replay path:** Same `startStream()` API, same HTTP endpoint — the distinction is
 audio mode: `drainText()` uses `playStream(streamFn)` (gapless scheduling) rather
 than the live path's `openStream()`.
+
 ### SessionStore (`session/storage.js`)
 
 Persistence with adapter seam at construction time.
@@ -295,6 +298,7 @@ Idle ──► Loading ────────┤
   │
   └─── Stop ──────────────► Done ──► Idle (immediate kill: abort HTTP, stop audio, fresh slate)
 ```
+
 ## File Inventory
 
 | File | Responsibility | Depth |
@@ -386,6 +390,7 @@ npm test
 | IndexedDB storage | New adapter + inject | `session/storage.js` |
 | New playback mode | Add state logic to Orchestrator | `session/orchestrator.js` |
 | Config validation | Add schema check before bootstrap | `config.js`, `index.js` |
+| Per-model system prompt | Add `systemPrompt` field to `ModelConfig`; Orchestrator passes per-model prompt to pipeline | `config.js`, `session/orchestrator.js`, `session/channel-pipeline.js` |
 
 ## TTS Stack References
 
