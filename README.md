@@ -1,10 +1,12 @@
 # Thinking Out Loud
 
-> Three local LLMs reason aloud simultaneously. A browser-based art installation where machine thinking becomes visible, audible, and temporal.
+> Three voices of Chinese philosophy reason aloud together. A browser-based art installation where machine thinking becomes visible, audible, and temporal.
 
 ## Introduction
 
-Thinking Out Loud poses a single philosophical question to three language models running locally on your machine. It streams their reasoning in real-time — every token appears as it's generated — then reads each model's answer aloud in a distinct voice, with live waveform visualizations mapping the rhythm of synthetic speech.
+Thinking Out Loud poses a single philosophical question to three language models — each shaped by a distinct school of classical Chinese thought. All three use the same underlying LLM, but each receives a different system prompt: one speaks as a **Chan Buddhist** (deconstructive, koan-like), one as a **Confucian scholar** (relational, virtue-centered), and one as a **Daoist recluse** (paradoxical, dwelling in not-knowing). The same question, three radically different ways of thinking.
+
+The app streams their reasoning in real-time — every token appears as it's generated — then reads each model's reasoning aloud in a distinct voice, with live waveform visualizations mapping the rhythm of synthetic speech. The final answers are deliberately suppressed: only the *thinking* is shown and heard.
 
 The piece is built for one observer, one screen, three voices. It turns LLM inference from a silent API call into a spatial, temporal experience: three parallel streams of reasoning, voiced one at a time in a randomized order per session — with brief overlap at the handoffs, because the next voice begins the moment the previous finishes generating, not when its audio falls silent. No two runs sound the same, even with identical prompts.
 
@@ -14,9 +16,11 @@ The piece is built for one observer, one screen, three voices. It turns LLM infe
 
 **2. Prompt** — Choose from curated philosophical questions or type your own. Recent questions from past sessions appear automatically.
 
-**3. Ask** — Pressing _Ask_ launches all three models simultaneously. Each column streams tokens as they arrive — no buffering, no "thinking…" placeholder.
+**3. The three thinkers** — The columns are labeled **释·Buddhism** (left, green), **儒·Confucianism** (center, orange), and **道·Daoism** (right, blue). Each column's header shows the philosophical school, not the underlying model name — because all three use the same LLM, only the system prompt differs.
 
-**4. Listen** — Within ~2 seconds of the first token, one voice begins speaking. All three models keep streaming reasoning concurrently, but only the active model feeds TTS; the others hold their accumulated text until it's their turn. The speaking order shuffles every session, and handoffs happen the moment a model's TTS generation finishes — its final sentence may still be playing out as the next voice begins, so you'll hear brief overlap at the boundaries. Each voice has a distinct timbre and stereo position (left / center / right).
+**4. Ask** — Pressing *Ask* launches all three models simultaneously. Each column streams tokens as they arrive — no buffering, no "thinking…" placeholder.
+
+**5. Listen** — Within ~2 seconds of the first token, one voice begins speaking. All three models keep streaming reasoning concurrently, but only the active model feeds TTS; the others hold their accumulated text until it's their turn. The speaking order shuffles every session, and handoffs happen the moment a model's TTS generation finishes — its final sentence may still be playing out as the next voice begins, so you'll hear brief overlap at the boundaries. Each voice has a distinct timbre and stereo position (left / center / right).
 
 **5. Watch** — A live waveform animates per column, driven by the audio signal's frequency spectrum. When silent, it breathes gently.
 
@@ -74,7 +78,7 @@ External processes:
 
 - **No framework.** Vanilla JS with ES modules keeps dependencies minimal and the bundle small.
 - **Streaming-first.** Every layer streams — LLM tokens, TTS audio chunks, audio graph scheduling. Nothing waits for a complete response.
-- **Sequenced TTS, parallel LLM.** All three models stream reasoning concurrently, but TTS feeding is sequenced — only one model feeds the TTS server at a time, in a randomized order per session. Handoff fires when a model's _generation_ completes (its sentence queue drains), not when its audio finishes playing. Because the Web Audio graph schedules PCM gaplessly and an `end()` doesn't wait for scheduled buffers to drain, the next voice can start audibly while the previous model's final sentence is still playing — yielding brief overlaps at handoffs rather than strict one-at-a-time playback.
+- **Sequenced TTS, parallel LLM.** All three models stream reasoning concurrently, but TTS feeding is sequenced — only one model feeds the TTS server at a time, in a randomized order per session. Handoff fires when a model's *generation* completes (its sentence queue drains), not when its audio finishes playing. Because the Web Audio graph schedules PCM gaplessly and an `end()` doesn't wait for scheduled buffers to drain, the next voice can start audibly while the previous model's final sentence is still playing — yielding brief overlaps at handoffs rather than strict one-at-a-time playback.
 - **Local-first.** Everything runs on your machine. No data leaves your network.
 
 ### Stack
@@ -103,7 +107,7 @@ LM Studio → Load model(s) → Start Server (port 1234)
 
 CORS must be enabled (LM Studio does this by default for localhost). If testing from another machine on your network, enable "Serve on Local Network".
 
-By default, all three columns point at the same provider URL. For a more interesting demo, configure different models per column — the contrast in reasoning styles is the point.
+By default, all three columns point at the same provider URL and model. The contrast in reasoning styles comes from different **system prompts**, not different models — each column uses a persona prompt (Chan Buddhist, Confucian scholar, Daoist recluse) to shape how it thinks, even though all three call the same underlying LLM.
 
 ### 2. TTS Server — Pocket TTS
 
@@ -122,6 +126,7 @@ On first run, the server downloads Pocket TTS (~100M params) from HuggingFace Hu
 **Voice cloning:** Drop a `.wav` file in `voices/` and restart — the server auto-detects and registers it as a selectable voice.
 
 Custom port/host:
+
 ```bash
 python tts-server-pocket.py --port 9000 --host 0.0.0.0
 ```
@@ -156,7 +161,7 @@ npm run build
 | Path | Role |
 |---|---|
 | `index.html` / `index.js` | Entry point — bootstrap UI → Orchestrator → AudioGraph |
-| `config.js` | Models, voices, prompts, TTS params, system prompt |
+| `config.js` | Models (with labels and per-model system prompts), voices, curated prompts, TTS params, global system prompt fallback |
 | `ui/` | DOM components: prompt selector, model columns, history panel, debug overlay |
 | `session/` | Orchestrator, ChannelPipeline, EventBus, Storage with adapter seam |
 | `llm/` | Streaming LLM client, health check, provider abstraction |
