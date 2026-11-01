@@ -2,6 +2,20 @@
 
 > Three voices of Chinese philosophy reason aloud together. A browser-based art installation where machine thinking becomes visible, audible, and temporal.
 
+## Demo
+
+[![Three models streaming reasoning side by side, each column voiced with a live waveform](docs/demo/demo-hero.gif)](docs/demo/thinking-out-loud-demo.mp4)
+
+Ask once — every model starts streaming its reasoning at the same time, and each column is read aloud in its own voice as it generates.
+
+<video src="https://github.com/nekobuff69/thinking-out-loud/raw/main/docs/demo/thinking-out-loud-demo.mp4" controls width="100%"></video>
+
+**[▶ Full demo — 45s, with sound](docs/demo/thinking-out-loud-demo.mp4)**
+
+When one voice finishes, the next takes over — the waveform hands off from column to column:
+
+![Waveform handing off between columns during a voice change](docs/demo/demo-waveform.gif)
+
 ## Introduction
 
 Thinking Out Loud poses a single philosophical question to three language models — each shaped by a distinct school of classical Chinese thought. All three use the same underlying LLM, but each receives a different system prompt: one speaks as a **Chan Buddhist** (deconstructive, koan-like), one as a **Confucian scholar** (relational, virtue-centered), and one as a **Daoist recluse** (paradoxical, dwelling in not-knowing). The same question, three radically different ways of thinking.
