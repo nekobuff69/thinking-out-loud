@@ -8,8 +8,6 @@
 
 Ask once — every model starts streaming its reasoning at the same time, and each column is read aloud in its own voice as it generates.
 
-<video src="https://github.com/nekobuff69/thinking-out-loud/raw/main/docs/demo/thinking-out-loud-demo.mp4" controls width="100%"></video>
-
 **[▶ Full demo — 45s, with sound](docs/demo/thinking-out-loud-demo.mp4)**
 
 When one voice finishes, the next takes over — the waveform hands off from column to column:
