@@ -8,9 +8,9 @@
 
 Ask once — every model starts streaming its reasoning at the same time, and each column is read aloud in its own voice as it generates.
 
-**[▶ Full demo — 45s, with sound](docs/demo/thinking-out-loud-demo.mp4)**
+**▶ Full demo — 45s, with sound:** [Streamable](https://streamable.com/izmq6f) (online, expires after 90 days) · [repo MP4](docs/demo/thinking-out-loud-demo.mp4) (permanent)
 
-When one voice finishes, the next takes over — the waveform hands off from column to column:
+Near the end, two voices overlap — both waveforms animate at once as the next thinker takes over:
 
 ![Two voices active at once — overlapping waveforms during a handoff](docs/demo/demo-waveform.gif)
 
