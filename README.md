@@ -12,7 +12,7 @@ Ask once — every model starts streaming its reasoning at the same time, and ea
 
 When one voice finishes, the next takes over — the waveform hands off from column to column:
 
-![Waveform handing off between columns during a voice change](docs/demo/demo-waveform.gif)
+![Two voices active at once — overlapping waveforms during a handoff](docs/demo/demo-waveform.gif)
 
 ## Introduction
 
