@@ -23,3 +23,7 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 ### Domain docs
 
 Single-context — `CONTEXT.md` + `UBIQUITOUS_LANGUAGE.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### UI conventions
+
+The interface is the B-2 retro-futurist skin: Question block, three Columns each with its own Waveform, a push-style History dock, a read-only Tool strip, and three mutually exclusive overlays. All on-screen copy is English. No Debug overlay, no Ask button, no variant codes, no waveform-change notifications. See the B-2 design artifacts in `docs/` and spec issue #72.

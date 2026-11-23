@@ -6,7 +6,7 @@
 
 [![Three models streaming reasoning side by side, each column voiced with a live waveform](docs/demo/demo-hero.gif)](docs/demo/thinking-out-loud-demo.mp4)
 
-Press Ask once and all three models start thinking out loud at the same time. Each column gets its own voice, speaking as the words stream in.
+Asking once starts all three models thinking out loud at the same time. Each column gets its own voice, speaking as the words stream in.
 
 **▶ Watch the full demo (45s, with sound):** [Streamable](https://streamable.com/izmq6f) (online until Jan 31, 2027) · [MP4 in the repo](docs/demo/thinking-out-loud-demo.mp4) (permanent)
 
@@ -22,13 +22,15 @@ The app streams their reasoning in real-time — every token appears as it's gen
 
 The piece is built for one observer, one screen, three voices. It turns LLM inference from a silent API call into a spatial, temporal experience: three parallel streams of reasoning, voiced one at a time in a randomized order per session — with brief overlap at the handoffs, because the next voice begins the moment the previous finishes generating, not when its audio falls silent. No two runs sound the same, even with identical prompts.
 
+> **Demo media is stale (2026-11-24).** The GIF/MP4 under `docs/demo/` still show the old column names (Qwen / Gemma / GPT-OSS) and a visible Debug overlay. Re-recording is required before delivery. The three HTML design artifacts in `docs/` are the visual source of truth for the B-2 refactor.
+
 ## User Experience Journey
 
-**1. Boot** — The page loads a dark, three-column layout. A loading indicator shows connectivity checks against the LLM provider and TTS server. Unreachable models are grayed out.
+**1. Boot** — The page loads the B-2 four-layer layout: Question block, stage with three Columns plus a collapsed History dock, and a read-only Tool strip. Connectivity feedback appears as State text in the Tool strip. Unreachable models are grayed out.
 
-**2. Prompt** — Choose from curated philosophical questions or type your own. Recent questions from past sessions appear automatically.
+**2. Prompt** — Click the Question block (or press `/`) to open the Question palette. Clicking a Curated prompt starts a Session immediately; a Free-text question is submitted with Enter. There is no Ask confirmation button.
 
-**3. The three thinkers** — The columns are labeled **释·Buddhism** (left, green), **儒·Confucianism** (center, orange), and **道·Daoism** (right, blue). Each column's header shows the philosophical school, not the underlying model name — because all three use the same LLM, only the system prompt differs.
+**3. The three thinkers** — The Columns are labeled **Buddhism** (left), **Confucianism** (center), and **Daoism** (right). All interface copy is English. Each Label shows the philosophical school, not the underlying model name — because all three use the same LLM, only the system prompt differs.
 
 **4. Ask** — Pressing *Ask* launches all three models simultaneously. Each column streams tokens as they arrive — no buffering, no "thinking…" placeholder.
 
@@ -36,9 +38,9 @@ The piece is built for one observer, one screen, three voices. It turns LLM infe
 
 **5. Watch** — A live waveform animates per column, driven by the audio signal's frequency spectrum. When silent, it breathes gently.
 
-**6. Replay** — Sessions auto-save to localStorage (last 20). Click any entry in the history panel to replay — text and audio reconstruct from saved data.
+**6. Replay** — Sessions auto-save to localStorage (last 20). Press `H` or click the History tab to expand the dock, then click any entry to replay. The dock narrows the Columns rather than covering them.
 
-**7. Debug** — Press `` ` `` or `Ctrl+Shift+D` to inspect per-model TTS latency, audio chunk stats, token counts, and pipeline errors. Also togglable via `?debug` query parameter.
+**7. Diagnostics** — Pipeline errors surface as one line of read-only text in the Tool strip. There is no Debug overlay, no backtick shortcut and no `?debug` parameter.
 
 ## Architecture
 
@@ -188,14 +190,14 @@ npm run build
 |---|---|
 | `index.html` / `index.js` | Entry point — bootstrap UI → Orchestrator → AudioGraph |
 | `config.js` | Models (with labels and per-model system prompts), voices, curated prompts, TTS params, global system prompt fallback |
-| `ui/` | DOM components: prompt selector, model columns, history panel, debug overlay |
+| `ui/` | DOM components: Question palette, Columns, Waveform picker, History dock, overlay state |
 | `session/` | Orchestrator, ChannelPipeline, EventBus, Storage with adapter seam |
 | `llm/` | Streaming LLM client, health check, provider abstraction |
 | `tts/` | TTS engine interface, Pocket TTS HTTP backend, TextChunker |
 | `audio/` | AudioGraph (Web Audio routing + ducking), waveform canvas |
 | `server/` | Pocket TTS server (FastAPI, streaming WAV, voice cloning) |
 | `test/` | Node test runner suites |
-| `docs/` | Debug overlay reference, architectural decision records |
+| `docs/` | B-2 UI design artifacts, architectural decision records |
 
 ---
 

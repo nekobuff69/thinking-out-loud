@@ -14,6 +14,7 @@ import "./column.css";
  * @property {(message: string) => void} setError
  * @property {(analyserNode: AnalyserNode, color: string) => void} attachWaveform
  * @property {() => void} stopWaveform
+ * @property {(variant: string) => void} setWaveformVariant
  * @property {(active: boolean) => void} setMuted
  * @property {(active: boolean) => void} setSoloed
  * @property {(fn: () => void) => void} onMuteToggle
@@ -39,47 +40,60 @@ export function createColumn(container, model) {
 	const col = document.createElement("div");
 	col.className = "column";
 
-	// Header with model label in model's color
+	// Header: channel number + pan position, the Label, and 17x17 M/S squares.
 	const header = document.createElement("div");
 	header.className = "column-header";
-	header.style.color = model.color;
 
-	// Display label (falls back to internal name for backward compat)
-	header.appendChild(document.createTextNode(model.label ?? model.name));
+	const channelNo = container.children.length + 1;
+	const cid = document.createElement("span");
+	cid.className = "column-cid";
+	const pan = model.pan < 0 ? "L" : model.pan > 0 ? "R" : "C";
+	cid.textContent = "CH 0" + channelNo + " / " + pan;
 
+	const nameEl = document.createElement("span");
+	nameEl.className = "column-name";
+	nameEl.textContent = model.label ?? model.name;
+
+	const ms = document.createElement("span");
+	ms.className = "column-ms";
 	const muteBtn = document.createElement("button");
 	muteBtn.className = "mute-btn";
 	muteBtn.textContent = "M";
-	muteBtn.style.marginLeft = "12px";
 	muteBtn.setAttribute("aria-label", "Mute " + (model.label ?? model.name));
 	const soloBtn = document.createElement("button");
 	soloBtn.className = "solo-btn";
 	soloBtn.textContent = "S";
 	soloBtn.setAttribute("aria-label", "Solo " + (model.label ?? model.name));
-	header.appendChild(muteBtn);
-	header.appendChild(soloBtn);
+	ms.appendChild(muteBtn);
+	ms.appendChild(soloBtn);
+	header.appendChild(cid);
+	header.appendChild(nameEl);
+	header.appendChild(ms);
 	const reasoningEl = document.createElement("div");
 	reasoningEl.className = "column-reasoning";
-	reasoningEl.style.color = model.color;
 
 	// "New content below" indicator
 	const scrollIndicator = document.createElement("div");
 	scrollIndicator.className = "scroll-indicator";
 	scrollIndicator.textContent = "↓ new content";
-	scrollIndicator.style.color = model.color;
 	scrollIndicator.style.display = "none";
 
+	const waveformBox = document.createElement("div");
+	waveformBox.className = "column-waveform";
 	const waveform = document.createElement("canvas");
-	waveform.className = "column-waveform";
+	waveform.className = "column-waveform-canvas";
+	waveformBox.appendChild(waveform);
 
 	col.appendChild(header);
 	col.appendChild(reasoningEl);
 	col.appendChild(scrollIndicator);
-	col.appendChild(waveform);
+	col.appendChild(waveformBox);
 	container.appendChild(col);
 
 	/** @type {ReturnType<typeof import("../audio/waveform.js").createWaveform> | null} */
 	let waveformController = null;
+	/** @type {string} */
+	let currentVariant = "scope";
 
 	reasoningEl.addEventListener("scroll", () => {
 		const { scrollTop, scrollHeight, clientHeight } = reasoningEl;
@@ -336,7 +350,21 @@ export function createColumn(container, model) {
 	 */
 	function attachWaveform(analyserNode, color) {
 		stopWaveform();
-		waveformController = createWaveform(waveform, analyserNode, color);
+		waveformController = createWaveform(waveform, analyserNode, color, {
+			variant: currentVariant,
+			fftSize: 1024,
+		});
+	}
+
+	/**
+	 * Hot-swap the animation in place. Never rebuilds the Channel or interrupts
+	 * playback, and never emits a notification.
+	 * @param {string} variant
+	 * @returns {void}
+	 */
+	function setWaveformVariant(variant) {
+		currentVariant = variant;
+		waveformController?.setVariant(variant);
 	}
 
 	/**
@@ -435,6 +463,7 @@ export function createColumn(container, model) {
 		setError,
 		attachWaveform,
 		stopWaveform,
+		setWaveformVariant,
 		startKaraoke,
 		stopKaraoke,
 		setMuted,

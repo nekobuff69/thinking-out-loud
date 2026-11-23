@@ -4,7 +4,7 @@
 
 ## Purpose
 
-"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three persona-configured streams from the same hosted model (OpenRouter `gpt-oss-20b` by default; internal names Qwen, Gemma, GPT-OSS) stream their internal reasoning tokens simultaneously. Each stream's reasoning is displayed in real time. The reasoning text is synthesized to speech sequentially — voices speak one at a time in a random order per session — each in a distinct voice spatially panned across stereo channels with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
+"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three persona-configured streams from the same hosted model (OpenRouter `gpt-oss-20b` by default; internal code names A / B / C) stream their internal reasoning tokens simultaneously. Each stream's reasoning is displayed in real time. The reasoning text is synthesized to speech sequentially — voices speak one at a time in a random order per session — each in a distinct voice spatially panned across stereo channels with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
 
 ## Tech Stack
 
@@ -31,7 +31,7 @@ index.html ──► index.js (bootstraps everything)
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  UI Layer (renders DOM, handles user events)                │
-│  ├── ui/prompt-selector.js    Ask button, curated prompts   │
+│  ├── ui/prompt-selector.js    Question palette, Curated prompts │
 
 │  ├── ui/column.js               Per-model text + waveform   │
 │  ├── ui/history.js            Past sessions panel           │
@@ -188,7 +188,7 @@ await provider.streamReasoning(
 
 `llm/llm-stream.js` preserves a backward-compatible `streamReasoning()` wrapper that forwards `apiKey` and `llmMaxTokens` (or legacy `maxTokens`) from its options object. `llm/health-check.js` now takes `(baseUrl, apiKey, timeoutMs)` and sends the same Bearer header on `GET /models`.
 
-**Token cap and truncation:** `llmMaxTokens` (default 3200) is the only generation limit — it is sent to the API as `max_tokens`, and reasoning tokens count toward it. There is no separate TTS word cap: every reasoning token the model returns is converted to speech. When the model stops on `finish_reason: "length"`, the provider fires `onTruncated` once; the pipeline emits `pipeline-truncated` on the event bus, which the debug overlay logs as an error line. Nothing is appended to the column UI. Measured on `gpt-oss-20b`: 200 tokens cut a thought mid-sentence, ~1243 tokens complete one — but real reasoning length varies widely by prompt, and 1600 still truncated two of three columns in practice.
+**Token cap and truncation:** `llmMaxTokens` (default 3200) is the only generation limit — it is sent to the API as `max_tokens`, and reasoning tokens count toward it. There is no separate TTS word cap: every reasoning token the model returns is converted to speech. When the model stops on `finish_reason: "length"`, the provider fires `onTruncated` once; the pipeline emits `pipeline-truncated` on the event bus, which surfaces in the Tool strip as an error line. Nothing is appended to the column UI. Measured on `gpt-oss-20b`: 200 tokens cut a thought mid-sentence, ~1243 tokens complete one — but real reasoning length varies widely by prompt, and 1600 still truncated two of three columns in practice.
 
 ### PocketTtsBackend (`tts/pocket-tts-backend.js`)
 
@@ -239,11 +239,11 @@ metadata (`displayName`, `color`, `voice`, `pan`), plus:
   cost? }` from the provider's terminal usage chunk, recorded for accounting.
 
 Replay preserves `answer`/`tokenUsage` since it fires no new LLM request. Old
-sessions using the former names Qwen/Gemma/GPT-OSS are normalized to A/B/C on replay.
+sessions using the former names Qwen/Gemma/GPT-OSS are still normalized to A/B/C on replay.
 
 ### SimpleEventBus (`session/event-bus.js`)
 
-Lightweight observer for cross-module state observation. Pipeline modules emit events; the debug overlay
+Lightweight observer for cross-module state observation. Pipeline modules emit events; the Tool strip
 (or any listener) subscribes. No producer knows about its consumers.
 
 **Currently emitted events:**
@@ -326,7 +326,7 @@ Idle ──► Loading ────────┤
 | `index.html` | Root HTML + loading spinner element | Shallow (markup) |
 | `index.js` | Bootstrap: wire UI → Orchestrator → AudioGraph, loading spinner | Shallow (wiring) |
 | `config.js` | Config: OpenRouter URLs/keys from `.env`, persona prompts, TTS params | Shallow (data) |
-| `ui/prompt-selector.js` | Curated cards + free-text + Ask button, keyboard a11y | Deep |
+| `ui/prompt-selector.js` | Question palette: Curated prompts + Free-text, single-entry Ask | Deep |
 | `ui/prompt-selector.css` | Prompt cards + input styling | Shallow (style) |
 
 | `ui/column.js` | Per-model text stream + waveform lifecycle | Deep |
@@ -363,7 +363,7 @@ Idle ──► Loading ────────┤
 | `.env` | `VITE_OPENROUTER_API_KEY` / `VITE_OPENROUTER_MODEL` for the browser app; legacy CLI vars (`BASE_URL`, `CHAT_COMPLETION_ENDPOINT`, `MODEL`) coexist | Shallow (config) |
 | `test/` | Node test runner suites (102 tests, 15 suites) | Shallow (test) |
 | `ui/debug-overlay.js` | Togglable pipeline diagnostics panel | Deep |
-| `ui/debug-overlay.css` | Debug overlay styling | Shallow (style) |
+| `ui/waveform-picker.css` | Waveform picker popover styling | Shallow (style) |
 
 ## Legacy Scripts
 

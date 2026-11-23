@@ -1,64 +1,62 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/*
+ * B-2 duotone design tokens. Values are transcribed verbatim from the visual
+ * source of truth `docs/ui-refactor-b2-detail.html` (.screen block). The JS
+ * mirror lives in `styles/design-tokens.js`; `test/design-tokens.test.js`
+ * enforces that both stay in sync.
+ */
 :root {
-  --bg: #000;
-  --border: #222;
-  --text: #ccc;
-  --dim: #555;
+  --bg: #080b08;
+  --surface: #0b100b;
+  --input-bg: #060906;
+  --fg: #b6ff1f;
+  --ac: #d6ff6b;
+
+  --ln: rgba(182,255,31,.5);
+  --sf: rgba(182,255,31,.08);
+  --dim: rgba(182,255,31,.28);
+  --ln-soft: rgba(182,255,31,.25);
+  --text-muted: rgba(182,255,31,.55);
+  --frame-glow: 0 0 0 5px rgba(182,255,31,.06);
+
+  --font-mono: "Courier New",ui-monospace,Consolas,monospace;
+  --type-micro: 9px;
+  --type-label: 10px;
+  --type-base: 11px;
+  --type-title: 20px;
+
+  --track-micro: .14em;
+  --track-label: .1em;
+
+  /* Legacy aliases — keep until no component references them. */
+  --signal: var(--fg);
+  --signal-active: var(--ac);
+  --text: var(--fg);
+  --text-dim: var(--text-muted);
+  --text-faint: rgba(182,255,31,.34);
+  --border: var(--ln);
+  --border-soft: var(--ln-soft);
+  --surface-raised: #111611;
+  --danger: #e08a5b;
+  --danger-surface: rgba(224,138,91,.12);
+  --type-body: var(--type-base);
+  --type-lead: 13px;
 }
 
 body {
   background: var(--bg);
-  color: var(--text);
-  font-family: 'Courier New', Courier, monospace;
+  color: var(--fg);
+  font: 11px "Courier New",ui-monospace,Consolas,monospace;
   min-height: 100vh;
-}
-
-#app {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
-
-#columns {
-  flex: 1;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: 1fr;
-  gap: 1rem;
-  padding: 1rem 2rem;
+  -webkit-font-smoothing: antialiased;
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 0.4; }
+  0%, 100% { opacity: .4; }
   50% { opacity: 1; }
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+@media (prefers-reduced-motion: reduce) {
+  .scroll-indicator { animation: none; }
 }
-
-/* Loading spinner */
-#loading-spinner {
-  display: none;
-  justify-content: center;
-  align-items: center;
-  padding: 2rem;
-}
-
-#loading-spinner.visible {
-  display: flex;
-}
-
-#loading-spinner .spinner-ring {
-  width: 32px;
-  height: 32px;
-  border: 2px solid var(--border);
-  border-top-color: #ffaa00;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-/* State label colors */
-.state-label.checking { color: #ffaa00; }
-.state-label.error { color: #ff4444; }

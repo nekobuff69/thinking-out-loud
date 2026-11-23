@@ -31,22 +31,41 @@
  */
 
 /**
+ * @typedef {Object} WaveformConfig
+ * @property {string} defaultVariant - Variant each Column starts with.
+ * @property {boolean} perColumn - Each Column owns its own variant.
+ * @property {string[]} variants - Whitelist of available variant ids.
+ * @property {number} fftSize - AnalyserNode fftSize; the time-domain Oscilloscope needs a larger window.
+ * @property {import("./styles/design-tokens.js").WaveformPalette} palette - B-2 duotone canvas colours.
+ */
+
+/**
  * @typedef {Object} Config
  * @property {string[]} curatedPrompts
  * @property {ModelConfig[]} models
  * @property {TTSConfig} tts
+ * @property {WaveformConfig} waveform
  * @property {string} systemPrompt
  * @property {number} maxHistorySessions
  */
 
 // OpenRouter credentials come from .env (Vite injects VITE_* vars at serve/build time).
 // Never hardcode the key here — see .env / .gitignore.
+import { FG, WAVEFORM_PALETTE } from "./styles/design-tokens.js";
 const env = /** @type {any} */ (import.meta.env ?? {});
 const OPENROUTER_API_KEY = env.VITE_OPENROUTER_API_KEY ?? "";
 const OPENROUTER_MODEL = env.VITE_OPENROUTER_MODEL || "openai/gpt-oss-20b";
 
 /** @type {Config} */
 export const config = {
+	waveform: {
+		defaultVariant: "scope",
+		perColumn: true,
+		variants: ["bars", "scope", "dots", "radial"],
+		fftSize: 1024,
+		palette: WAVEFORM_PALETTE,
+	},
+
 	curatedPrompts: [
 		"If a machine could dream, would its dreams be about us — or about something we cannot imagine?",
 		"When you answer a question, do you understand it, or merely predict what understanding sounds like?",
@@ -58,7 +77,7 @@ export const config = {
 	models: [
 		{
 			name: "A",
-			label: "释·Buddhism",
+			label: "Buddhism",
 			systemPrompt:
 				"You are a Chan Buddhist. You see through attachments, contemplate suffering and impermanence, and use koan-like paradox to break dualities.",
 			provider: "openrouter",
@@ -66,13 +85,13 @@ export const config = {
 			model: OPENROUTER_MODEL,
 			apiKey: OPENROUTER_API_KEY,
 			voice: "user_clone",
-			color: "#00ff88",
+			color: FG,
 			pan: -0.5,
 			reasoningFormat: "separate",
 		},
 		{
 			name: "B",
-			label: "儒·Confucianism",
+			label: "Confucianism",
 			systemPrompt:
 				"You are a Confucian scholar. You reason through human relationships, self-cultivation, and heavenly principle. You value harmony, virtue, and the doctrine of the mean.",
 			provider: "openrouter",
@@ -80,13 +99,13 @@ export const config = {
 			model: OPENROUTER_MODEL,
 			apiKey: OPENROUTER_API_KEY,
 			voice: "eve",
-			color: "#ff6644",
+			color: FG,
 			pan: 0.0,
 			reasoningFormat: "separate",
 		},
 		{
 			name: "C",
-			label: "道·Daoism",
+			label: "Daoism",
 			systemPrompt:
 				"You are a Daoist recluse. You question the usefulness of thinking itself, speak in natural metaphors, embrace paradox, and dwell in not-knowing.",
 			provider: "openrouter",
@@ -94,7 +113,7 @@ export const config = {
 			model: OPENROUTER_MODEL,
 			apiKey: OPENROUTER_API_KEY,
 			voice: "jane",
-			color: "#44aaff",
+			color: FG,
 			pan: 0.5,
 			reasoningFormat: "separate",
 		},
