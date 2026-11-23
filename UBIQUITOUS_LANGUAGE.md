@@ -8,7 +8,7 @@
 | **Question** | The text the user asks — either a curated prompt or free-text input | Query, prompt, input |
 | **Curated prompt** | One of five pre-written philosophical questions that frame the artistic theme | Preset, starter, suggested question |
 | **Free-text question** | A user-typed question not from the curated list | Custom prompt, typed input |
-| **Ask** | The user action that starts a session (clicking the Ask button) | Submit, go, start, run |
+| **Ask** | The user action that starts a session — clicking a Curated prompt, pressing 1–5, or submitting a Free-text question with Enter. No confirmation button exists. | Submit, go, start, run |
 | **Loading** | Session state: TTS server connection via HTTP health check (shows spinner) | Warm-up, setup, preparing |
 | **Checking** | Session state: LLM provider health pings (/models). Follows Loading, precedes Thinking. | Probing, pinging, verifying |
 | **Thinking** | Session state: LLM reasoning streams are active and TTS is playing | Streaming, generating, running |
@@ -24,7 +24,7 @@
 | Term | Definition | Aliases to avoid |
 |---|---|---|
 | **LLM** | A large language model, hosted via OpenRouter in the current stack, that receives a question and produces reasoning | AI, bot, agent, mind |
-| **Model** | The hosted model slug in config (currently `openai/gpt-oss-20b`); the three columns keep internal names Qwen, Gemma, GPT-OSS but call the same model with different system prompts | LLM instance, engine, brain |
+| **Model** | The hosted model slug in config (currently `openai/gpt-oss-20b`); the three Columns keep internal code names A / B / C but call the same model with different system prompts | LLM instance, engine, brain |
 | **Provider** | The service serving the model through an OpenAI-compatible API — OpenRouter (cloud) in the current stack; Bearer API key required | Server, backend, inference engine, runtime |
 | **API key** | `VITE_OPENROUTER_API_KEY` from `.env`, injected by Vite into the browser bundle and sent as `Authorization: Bearer <key>` on provider requests | Token, secret, password (ambiguous with LLM tokens) |
 | **Reasoning** | The LLM's internal thought process — the `reasoning_content` field in the API response | Thinking, chain of thought, internal monologue, reasoning block |
@@ -35,10 +35,10 @@
 | **Streaming** | Receiving LLM output token-by-token via SSE as it is generated | Live, real-time, chunked |
 | **Token** | A single unit of text from the LLM stream (sub-word or punctuation) | Piece, fragment, chunk (when referring to text, not audio) |
 | **LLM max tokens** | `tts.llmMaxTokens` (default 3200) — the only generation limit, sent to the API as `max_tokens`. Reasoning tokens count toward it. Every reasoning token the model returns is converted to speech; there is no separate TTS word cap. | Token cap, generation cap, output budget |
-| **Truncation** | The model stopped with `finish_reason: "length"` — its thought was cut off by the token limit. Surfaced via the provider's `onTruncated` callback and a `pipeline-truncated` event that the debug overlay logs. Nothing is appended to the column UI, and the stored reasoning text stays clean. | Cut off, mid-thought stop, length stop |
+| **Truncation** | The model stopped with `finish_reason: "length"` — its thought was cut off by the token limit. Surfaced via the provider's `onTruncated` callback and a `pipeline-truncated` event on the Event bus. Nothing is appended to the column UI, and the stored reasoning text stays clean. | Cut off, mid-thought stop, length stop |
 | **System prompt** | The instruction given to a model before the question, shaping its reasoning style. Each model has its own `systemPrompt` in config; falls back to the global `config.systemPrompt` if absent. | System message, preamble, context |
 | **Internal name (code name)** | Stable identifier for a column/model, currently A / B / C. Used as the Map key across columns, TTS engines, sessions, mute/solo and playback order. Never displayed, not tied to the API model or the philosophical role. | Key, ID, code name |
-| **Label** | The UI column header text displayed instead of the internal code name. Set via `label` in `ModelConfig`; falls back to `name` if absent. Currently "释·Buddhism", "儒·Confucianism", "道·Daoism". | Display name, heading, title |
+| **Label** | The UI column header text displayed instead of the internal code name. Set via `label` in `ModelConfig`; falls back to `name` if absent. Currently "Buddhism", "Confucianism", "Daoism" — English only. | Display name, heading, title |
 | **Token usage** | Accounting from the provider's terminal usage chunk: `prompt_tokens`, `completion_tokens`, `total_tokens`, `reasoning_tokens`, `cost`. Stored per model as `tokenUsage`, not displayed. | Usage, accounting, cost |
 | **Role** | The philosophical persona assigned via a model's `systemPrompt`. The three roles are **Buddhism** (deconstructive, Chan Buddhist), **Confucianism** (relational, Confucian scholar), and **Daoism** (paradoxical, Daoist recluse). | Persona, character, voice (abstract) |
 
@@ -73,15 +73,20 @@
 
 | Term | Definition | Aliases to avoid |
 |---|---|---|
-|| **Column** | A vertical panel in the UI representing one model — contains display name, reasoning text, and waveform | Pane, panel, slot, lane |
-|| **Waveform** | A live frequency-domain spectrum visualization of a channel's AnalyserNode FFT data, rendered as mirrored log-scale bars in the model's color | Audio viz, sound wave, oscilloscope, bars |
-| **Idle waveform** | The gentle breathing/pulsing animation shown when a channel is silent | Standby animation, resting waveform, idle pulse |
-| **Display name** | The human-readable name for a model shown in the UI (e.g. "Qwen", not "qwen_qwen3-30b") | Label, title, heading |
-| **Color** | The distinguishing hex color assigned to a model, applied to text and waveform | Hue, tint, theme color |
-| **Dark theater** | The visual theme: black background, colored text, glowing waveforms | Dark mode, cinematic theme, stage |
-| **Debug overlay** | A togglable panel (backtick or Ctrl+Shift+D shortcut) showing real-time pipeline state, per-model token counts, TTS latency (time-to-first-chunk), audio chunk delivery, and error logs | Diagnostics panel, dev tools, status panel |
-| **Event bus** | A lightweight observer pattern allowing pipeline modules to emit state events without knowing about consumers (e.g. the debug overlay) | Message bus, pub-sub, event stream |
-| **Loading spinner** | CSS-animated ring shown during the Loading state, hidden when session enters Checking. Provides visual feedback during TTS server connection. | Loader, progress indicator |
+| **Question block** | The 100px proposition layer at the top. Holds the current Question in the largest type on screen plus its archival metadata. Constant for the whole Session; the whole block is the single entry point to the Question palette. | Header, title bar, prompt strip |
+| **Column** | A vertical panel representing one model — contains the Label, streaming Reasoning text, and its own Waveform. | Pane, panel, slot, lane |
+| **Waveform** | A live visualization of a Channel's AnalyserNode data, rendered by one of four named animations: Mirrored bars, Oscilloscope, Dot matrix, Radial voiceprint. Each Column owns its own animation. | Audio viz, sound wave, bars |
+| **Idle waveform** | The gentle breathing animation each Waveform renders while its Channel is silent. | Standby animation, resting waveform |
+| **Question palette** | The on-demand overlay holding the five Curated prompts and the Free-text question field. Selecting a Curated prompt asks immediately. | Prompt bar, command menu |
+| **Waveform picker** | The popover anchored above the Column whose Waveform was clicked. Shows four live previews and animation names; applying changes only that Column. | Settings dialog, display menu |
+| **History dock** | A flex sibling of the Columns, collapsed to a 30px tab and expanded to 246px by narrowing the Columns. Never covers Reasoning text. | Drawer, sidebar overlay |
+| **Tool strip** | The 28px read-only telemetry strip at the bottom: Session, State, Order, Elapsed, Wave, plus a STOP button that appears only while Thinking or Speaking. | Status bar, footer |
+| **Overlay manager** | Pure state enforcing that at most one of Question palette, Waveform picker and History dock is open. | Modal manager |
+| **Label** | The English Column header text: Buddhism / Confucianism / Daoism. Set via `label` in `ModelConfig`. | Display name, heading, title |
+| **Color** | A Channel identity inside the B-2 duotone palette, expressed as CSS tokens rather than a saturated per-Model hex. | Hue, tint, theme color |
+| **Event bus** | A lightweight observer pattern allowing pipeline modules to emit state events without knowing about consumers. | Message bus, pub-sub, event stream |
+
+Removed terms: **Dark theater** (replaced by the B-2 retro-futurist skin), **Debug overlay**, **Loading spinner**, and **Display name** (the Column header is now the Label). Pipeline errors surface as one line of read-only text in the Tool strip.
 
 ## Persistence
 
@@ -126,6 +131,6 @@
 ## Flagged ambiguities
 
 - "**thinking**" was used conversationally to mean both the **Thinking** session state and the act of **Reasoning**. In the domain language, **Thinking** is always a session state; **Reasoning** is the model's output. Say "the session is in Thinking state" not "the model is thinking."
-- "**model**" without qualification is ambiguous — it could mean the hosted **LLM** (internal column names Qwen/Gemma/GPT-OSS, all backed by the same OpenRouter model slug) or the **TTS model** (Pocket TTS). Always disambiguate: say **Model** for LLMs, **TTS model** for speech synthesis.
+- "**model**" without qualification is ambiguous — it could mean the hosted **LLM** (internal code names A/B/C, all backed by the same OpenRouter model slug) or the **TTS model** (Pocket TTS). Always disambiguate: say **Model** for LLMs, **TTS model** for speech synthesis.
 - "**voice**" was used loosely for both the abstract idea ("giving AI a voice") and the concrete TTS voice preset. Use **Voice** only for the TTS preset. For the abstract idea, say "the model speaks" or "the model's speech." Also ambiguous: a **Voice** may refer to the config value (an embedding name like `alba-mackenna/casual.wav`), the underlying **Speaker embedding** (a `.safetensors` file), or a raw audio sample used for **Voice cloning**. Disambiguate: use **Voice** for the identity, **Speaker embedding** for the data file, **Voice cloning** for the creation process.
 - "**stream**" was used for both the LLM data flow and the audio playback. In the domain language, **Streaming** is always the LLM token flow. For audio, say "playback" or "the **Channel** is active." A **TTS stream** (via **Stream handle**) is the active synthesis session between one pipeline and the server.
