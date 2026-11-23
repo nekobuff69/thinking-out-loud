@@ -1,79 +1,104 @@
 /**
- * @typedef {import("./config.js").ModelConfig} ModelConfig
- * @typedef {import("./session/storage.js").SessionData} SessionData
+ * Bootstrap: four-layer shell (Question block / stage / tool strip / overlays),
+ * single-entry Ask, mutually exclusive overlays, and the keyboard map.
+ *
+ * Presentation layer only. The Orchestrator state machine, ChannelPipeline,
+ * AudioGraph, Provider, SessionStore and karaoke highlight are untouched.
  */
-
 import { config } from "./config.js";
 import { createPromptSelector } from "./ui/prompt-selector.js";
 import { createHistory } from "./ui/history.js";
+import { createOverlayState } from "./ui/overlay-state.js";
 import { createColumn } from "./ui/column.js";
 import { PocketTtsBackend } from "./tts/pocket-tts-backend.js";
 import { AudioGraph } from "./audio/audio-graph.js";
-
 import { Orchestrator } from "./session/orchestrator.js";
 import { SessionStore } from "./session/storage.js";
-import { DebugOverlay } from "./ui/debug-overlay.js";
 
 import "./styles/global.css";
-import "./styles/top-bar.css";
-import "./ui/debug-overlay.css";
+import "./styles/shell.css";
 
-// --- Storage ---
 const store = new SessionStore(config.maxHistorySessions);
+const overlays = createOverlayState();
 
-// --- UI setup ---
-const topBar = document.getElementById("top-bar");
-const columnsContainer = document.getElementById("columns");
-if (!topBar || !columnsContainer) throw new Error("Required DOM elements missing");
+// --- DOM lookups ---
+/** @param {string} id @returns {HTMLElement} */
+function must(id) {
+  const el = document.getElementById(id);
+  if (!el) throw new Error("Required DOM element missing: " + id);
+  return el;
+}
 
-// Create columns for all 3 models
+const questionBlock = must("question-block");
+const qText = must("q-text");
+const qSession = must("q-session");
+const qSource = must("q-source");
+const qAnchor = must("q-anchor");
+const columnsContainer = must("columns");
+const historyDock = must("history-dock");
+const paletteHost = must("question-palette");
+const pickerHost = must("waveform-picker");
+const stopBtn = /** @type {HTMLButtonElement} */ (must("stop-btn"));
+const tSession = must("t-session");
+const tState = must("t-state");
+const tOrder = must("t-order");
+const tElapsed = must("t-elapsed");
+const tWave = must("t-wave");
+const tMessage = must("t-message");
+
+// --- Columns (Column API unchanged) ---
 const columns = new Map();
 for (const model of config.models) {
   const column = createColumn(columnsContainer, model);
   columns.set(model.name, column);
 }
 
-// History button
-const historyBtn = document.createElement("button");
-historyBtn.className = "ask-btn";
-historyBtn.textContent = "History";
-historyBtn.style.cssText = "margin-left:auto;margin-right:0.5rem;";
-topBar.appendChild(historyBtn);
+// --- Question palette ---
+const promptSelector = createPromptSelector(paletteHost, config.curatedPrompts, store.getQuestions());
 
-// Prompt selector (with recent questions)
-const recentQuestions = store.getQuestions();
-const promptSelector = createPromptSelector(topBar, config.curatedPrompts, recentQuestions);
-
-// Stop button
-const stopBtn = document.createElement("button");
-stopBtn.className = "ask-btn";
-stopBtn.textContent = "Stop";
-stopBtn.style.display = "none";
-topBar.appendChild(stopBtn);
-
-// Session state label
-const stateLabel = document.createElement("span");
-stateLabel.className = "state-label";
-stateLabel.style.cssText = "color:#555;font-size:0.8rem;margin-left:1rem;";
-topBar.appendChild(stateLabel);
-
-// Loading spinner (injected into HTML statically; get reference)
-const loadingSpinner = document.getElementById("loading-spinner");
-
-// History panel
-const historyPanel = createHistory(document.body, store, (session) => {
+// --- History dock (push-style flex sibling, never covers a Column) ---
+const historyPanel = createHistory(historyDock, store, (session) => {
   orchestrator.replay(session);
 });
 
-historyBtn.addEventListener("click", () => {
-  historyPanel.show();
+// --- Overlay rendering ---
+/** @returns {void} */
+function renderOverlays() {
+  const current = overlays.current();
+  if (current === "palette") promptSelector.show();
+  else promptSelector.hide();
+  if (current === "history") historyPanel.show();
+  else historyPanel.hide();
+  paletteHost.classList.toggle("open", current === "palette");
+  pickerHost.classList.toggle("open", current === "picker");
+  document.body.classList.toggle("overlay-open", current !== null);
+}
+
+/** @param {string} name @returns {void} */
+function openOverlay(name) {
+  overlays.open(name);
+  renderOverlays();
+}
+/** @param {string} name @returns {void} */
+function toggleOverlay(name) {
+  overlays.toggle(name);
+  renderOverlays();
+}
+/** @param {string} name @returns {void} */
+function closeOverlay(name) {
+  overlays.close(name);
+  renderOverlays();
+}
+
+questionBlock.addEventListener("click", () => toggleOverlay("palette"));
+paletteHost.addEventListener("click", (event) => {
+  if (event.target === paletteHost) closeOverlay("palette");
 });
 
 // --- Audio + TTS ---
 const audioGraph = new AudioGraph();
 audioGraph.enableTabResume();
 
-// Per-model PocketTtsBackend instances (one per model)
 const ttsEngines = new Map();
 for (const model of config.models) {
   ttsEngines.set(
@@ -93,61 +118,134 @@ const orchestrator = new Orchestrator({
   storage: store,
 });
 
-// Wire column mute/solo buttons to orchestrator
 for (const [name, column] of columns) {
   column.onMuteToggle(() => orchestrator.toggleMute(name));
   column.onSoloToggle(() => orchestrator.toggleSolo(name));
 }
 
-orchestrator.onStateChange((state) => {
-  stateLabel.textContent = state;
-  if (state.startsWith("Error")) {
-    stateLabel.style.color = "#ff4444";
-  } else if (state.startsWith("Loading") || state === "Checking") {
-    stateLabel.style.color = "#ffaa00";
-  } else {
-    stateLabel.style.color = "#555";
-  }
+// --- Session state -> read-only tool strip ---
+let sessionCount = 0;
+let elapsedSeconds = 0;
+/** @type {ReturnType<typeof setInterval> | null} */
+let elapsedTimer = null;
 
-  // Show spinner during loading phases, hide otherwise
-  if (loadingSpinner) {
-    loadingSpinner.classList.toggle("visible", state.startsWith("Loading"));
-  }
-
-  if (state === "Loading" || state.startsWith("Loading:") || state === "Checking" || state === "Thinking" || state === "Speaking") {
-    promptSelector.setEnabled(false);
-    historyBtn.disabled = true;
-    stopBtn.style.display = (state === "Thinking" || state === "Speaking") ? "inline-block" : "none";
-  }
-
-  if (state === "Done" || state.startsWith("Error")) {
-    promptSelector.setEnabled(true);
-    historyBtn.disabled = false;
-    stopBtn.style.display = "none";
-    if (state.startsWith("Error")) {
-      // Reset to idle via stop() so user can try again
-      setTimeout(() => orchestrator.stop(), 3000);
-    }
-    // Refresh recent questions
-    promptSelector.updateRecentQuestions(store.getQuestions());
-  }
-});
-
-stopBtn.addEventListener("click", () => {
-  orchestrator.stop();
-});
-
-// Debug overlay
-const debugOverlay = new DebugOverlay({ orchestrator });
-if (window.location.search.includes("debug")) {
-  debugOverlay.toggle();
+/** @returns {void} */
+function startClock() {
+  stopClock();
+  elapsedSeconds = 0;
+  tElapsed.textContent = "00:00";
+  elapsedTimer = setInterval(() => {
+    elapsedSeconds += 1;
+    const mm = String(Math.floor(elapsedSeconds / 60)).padStart(2, "0");
+    const ss = String(elapsedSeconds % 60).padStart(2, "0");
+    tElapsed.textContent = mm + ":" + ss;
+  }, 1000);
+}
+/** @returns {void} */
+function stopClock() {
+  if (elapsedTimer !== null) clearInterval(elapsedTimer);
+  elapsedTimer = null;
 }
 
-promptSelector.onAsk(async (question) => {
+orchestrator.onStateChange((state) => {
+  tState.textContent = state;
+  const running = state === "Thinking" || state === "Speaking" ||
+    state === "Loading" || state.startsWith("Loading:") || state === "Checking";
+  const stoppable = state === "Thinking" || state === "Speaking";
+
+  document.body.classList.toggle("session-running", running);
+  stopBtn.style.display = stoppable ? "inline-block" : "none";
+  promptSelector.setEnabled(!running);
+
+  if (state.startsWith("Error")) {
+    tMessage.textContent = state;
+  } else if (state.startsWith("Loading")) {
+    tMessage.textContent = "Connecting to the TTS server…";
+  } else if (state === "Checking") {
+    tMessage.textContent = "Checking LLM providers…";
+  } else if (state === "Done") {
+    tMessage.textContent = "Session saved";
+  } else {
+    tMessage.textContent = "";
+  }
+
+  if (state === "Thinking" || state === "Loading") startClock();
+  if (state === "Done" || state.startsWith("Error")) stopClock();
+
+  if (state === "Done" || state.startsWith("Error")) {
+    promptSelector.updateRecentQuestions(store.getQuestions());
+    if (state.startsWith("Error")) setTimeout(() => orchestrator.stop(), 3000);
+  }
+});
+
+stopBtn.addEventListener("click", () => orchestrator.stop());
+
+// --- Ask: one action, no confirmation button ---
+/** @param {string} question */
+async function ask(question) {
+  sessionCount += 1;
+  const id = String(sessionCount).padStart(3, "0");
+  qText.textContent = question;
+  qSession.textContent = id;
+  tSession.textContent = id;
+  const curatedIndex = config.curatedPrompts.indexOf(question);
+  qSource.textContent = curatedIndex >= 0
+    ? "Curated " + String(curatedIndex + 1).padStart(2, "0")
+    : "Free-text question";
+  tOrder.textContent = config.models.map((m) => m.name).join(" → ");
+  closeOverlay("palette");
   try {
     await orchestrator.start(question);
   } catch (err) {
     console.error("Session start failed:", err);
-    // orchestrator.onStateChange handles Error state via stop() path
+  }
+}
+promptSelector.onAsk(ask);
+
+// --- Keyboard map ---
+document.addEventListener("keydown", (event) => {
+  const target = /** @type {HTMLElement} */ (event.target);
+  const typing = /INPUT|TEXTAREA/.test(target.tagName);
+
+  if (event.key === "Escape") {
+    const current = overlays.escapeTarget();
+    if (current) closeOverlay(current);
+    else if (document.body.classList.contains("session-running")) orchestrator.stop();
+    return;
+  }
+
+  if (typing) return;
+
+  if (event.key === "/") {
+    event.preventDefault();
+    toggleOverlay("palette");
+    return;
+  }
+  if (event.key === "h" || event.key === "H") {
+    toggleOverlay("history");
+    return;
+  }
+  if (event.key === "v" || event.key === "V") {
+    // Ticket 76 wires the shuffle; the key is reserved here so the map is stable.
+    document.dispatchEvent(new CustomEvent("waveform:shuffle", { detail: { reset: event.shiftKey } }));
+    return;
+  }
+  if (/^[1-5]$/.test(event.key) && overlays.current() === "palette") {
+    promptSelector.selectByKeyboard(Number(event.key) - 1);
+    return;
+  }
+  if (event.altKey && /^[1-3]$/.test(event.key)) {
+    const name = config.models[Number(event.key) - 1]?.name;
+    if (name) {
+      if (event.shiftKey) orchestrator.toggleSolo(name);
+      else orchestrator.toggleMute(name);
+    }
   }
 });
+
+// Wave readout (ticket 76 replaces this with live per-Column names).
+tWave.textContent = config.waveform.defaultVariant.toUpperCase();
+
+// Escape priority helper for other overlays: picker closes first.
+window.addEventListener("waveform:open", () => openOverlay("picker"));
+window.addEventListener("waveform:close", () => closeOverlay("picker"));

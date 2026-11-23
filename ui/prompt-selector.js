@@ -1,6 +1,7 @@
 /**
- * Renders the PromptSelector: curated prompt cards + free-text input + Ask button.
- * Returns an object with methods to manage the UI state.
+ * Question palette: the on-demand overlay that holds Curated prompts and the
+ * Free-text question. Clicking a Curated prompt starts a Session immediately —
+ * there is no Ask confirmation button anywhere in the interface.
  */
 import "./prompt-selector.css";
 
@@ -10,6 +11,11 @@ import "./prompt-selector.css";
  * @property {(questions: string[]) => void} updateRecentQuestions
  * @property {() => string | null} getSelectedQuestion
  * @property {(value: boolean) => void} setEnabled
+ * @property {(index: number) => void} selectByKeyboard
+ * @property {() => void} show
+ * @property {() => void} hide
+ * @property {() => boolean} isOpen
+ * @property {HTMLDivElement} panel
  */
 
 /**
@@ -20,83 +26,132 @@ import "./prompt-selector.css";
  */
 export function createPromptSelector(container, curatedPrompts, recentQuestions = []) {
   /** @type {string | null} */
-  let selectedPrompt = null;
-  /** @type {boolean} */
+  let selectedPrompt = curatedPrompts[0] ?? null;
   let enabled = true;
+  /** @type {((question: string) => void) | null} */
+  let onAsk = null;
 
-  const wrapper = document.createElement("div");
-  wrapper.className = "prompt-selector";
+  const panel = document.createElement("div");
+  panel.className = "palette-panel";
+  panel.hidden = true;
 
-  // Prompt cards
+  const header = document.createElement("div");
+  header.className = "palette-header";
+  const title = document.createElement("span");
+  title.textContent = "Select question";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "palette-close";
+  close.textContent = "× esc";
+  close.addEventListener("click", () => hide());
+  header.appendChild(title);
+  header.appendChild(close);
+
+  const body = document.createElement("div");
+  body.className = "palette-body";
+
+  const curatedLabel = document.createElement("div");
+  curatedLabel.className = "palette-label";
+  curatedLabel.textContent = "Curated prompts · click to ask · 1–5";
+
   const cardsContainer = document.createElement("div");
   cardsContainer.className = "prompt-cards";
 
-  curatedPrompts.forEach((prompt) => {
+  const recentContainer = document.createElement("div");
+  recentContainer.className = "recent-questions";
+  recentContainer.style.display = "none";
+  const recentLabel = document.createElement("div");
+  recentLabel.className = "recent-label";
+  recentLabel.textContent = "Recent";
+  const recentList = document.createElement("div");
+  recentList.className = "recent-list";
+  recentContainer.appendChild(recentLabel);
+  recentContainer.appendChild(recentList);
+
+  const freeLabel = document.createElement("div");
+  freeLabel.className = "palette-label";
+  freeLabel.textContent = "Or type your own · enter to ask";
+
+  const textInput = document.createElement("textarea");
+  textInput.className = "prompt-input";
+  textInput.placeholder = "Ask anything…";
+  textInput.rows = 2;
+
+  const runningHint = document.createElement("div");
+  runningHint.className = "run-hint";
+  runningHint.textContent = "Running · stop first to ask again";
+  runningHint.style.display = "none";
+
+  const foot = document.createElement("div");
+  foot.className = "palette-foot";
+  foot.textContent = "/ open · esc close · h history · v shuffle · 1–5 ask";
+
+  /** @param {string} question */
+  function ask(question) {
+    if (!enabled || !question) return;
+    hide();
+    onAsk?.(question);
+  }
+
+  curatedPrompts.forEach((prompt, index) => {
     const card = document.createElement("button");
-    card.className = "prompt-card";
     card.type = "button";
-    card.textContent = prompt;
+    card.className = "prompt-card" + (index === 0 ? " selected" : "");
+    card.innerHTML = "<i>" + (index + 1) + "</i>";
+    card.appendChild(document.createTextNode(prompt));
     card.addEventListener("click", () => {
       if (!enabled) return;
-      // Deselect other cards
-      cardsContainer.querySelectorAll(".prompt-card").forEach((c) =>
-        c.classList.remove("selected")
-      );
-      card.classList.add("selected");
+      selectCard(index);
       selectedPrompt = prompt;
-      // Clear free-text input
       textInput.value = "";
-      onSelectionChange?.();
+      ask(prompt);
     });
     cardsContainer.appendChild(card);
   });
 
-  // Free-text input
-  const textInput = document.createElement("textarea");
-  textInput.className = "prompt-input";
-  textInput.placeholder = "Or type your own question…";
-  textInput.rows = 2;
+  /** @param {number} index */
+  function selectCard(index) {
+    cardsContainer.querySelectorAll(".prompt-card").forEach((c, i) => {
+      c.classList.toggle("selected", i === index);
+    });
+  }
+
+  /** @param {number} index */
+  function selectByKeyboard(index) {
+    if (index < 0 || index >= curatedPrompts.length) return;
+    selectCard(index);
+    selectedPrompt = curatedPrompts[index];
+    textInput.value = "";
+    ask(selectedPrompt);
+  }
+
   textInput.addEventListener("input", () => {
     if (!enabled) return;
-    // Deselect cards when typing
-    cardsContainer.querySelectorAll(".prompt-card").forEach((c) =>
-      c.classList.remove("selected")
-    );
+    cardsContainer.querySelectorAll(".prompt-card").forEach((c) => c.classList.remove("selected"));
     selectedPrompt = null;
-    onSelectionChange?.();
   });
 
-  // Ask button
-  const askBtn = document.createElement("button");
-  askBtn.className = "ask-btn";
-  askBtn.type = "button";
-  askBtn.textContent = "Ask";
-  askBtn.disabled = true;
-  askBtn.addEventListener("click", () => {
-    const question = getSelectedQuestion();
-    if (question) {
-      onAsk?.(question);
+  textInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      const value = textInput.value.trim();
+      if (value) ask(value);
     }
   });
 
-  // Recent questions section
-  const recentContainer = document.createElement("div");
-  recentContainer.className = "recent-questions";
-  recentContainer.style.display = "none";
+  body.appendChild(curatedLabel);
+  body.appendChild(cardsContainer);
+  body.appendChild(recentContainer);
+  body.appendChild(freeLabel);
+  body.appendChild(textInput);
+  body.appendChild(runningHint);
 
-  const recentLabel = document.createElement("div");
-  recentLabel.className = "recent-label";
-  recentLabel.textContent = "Recent";
-  recentContainer.appendChild(recentLabel);
+  panel.appendChild(header);
+  panel.appendChild(body);
+  panel.appendChild(foot);
+  container.appendChild(panel);
 
-  const recentList = document.createElement("div");
-  recentList.className = "recent-list";
-  recentContainer.appendChild(recentList);
-
-  /**
-   * @param {string[]} questions
-   * @returns {void}
-   */
+  /** @param {string[]} questions */
   function renderRecentQuestions(questions) {
     recentList.innerHTML = "";
     if (!questions || questions.length === 0) {
@@ -106,76 +161,57 @@ export function createPromptSelector(container, curatedPrompts, recentQuestions 
     recentContainer.style.display = "block";
     for (const q of questions) {
       const item = document.createElement("button");
-      item.className = "recent-item";
       item.type = "button";
+      item.className = "recent-item";
       item.textContent = q;
       item.addEventListener("click", () => {
         if (!enabled) return;
         textInput.value = q;
-        // Deselect cards
-        cardsContainer.querySelectorAll(".prompt-card").forEach((c) =>
-          c.classList.remove("selected")
-        );
+        cardsContainer.querySelectorAll(".prompt-card").forEach((c) => c.classList.remove("selected"));
         selectedPrompt = null;
-        onSelectionChange?.();
       });
       recentList.appendChild(item);
     }
   }
-
-  /**
-   * @param {string[]} questions
-   * @returns {void}
-   */
-  function updateRecentQuestions(questions) {
-    renderRecentQuestions(questions);
-  }
-
-  // Initial render
   renderRecentQuestions(recentQuestions);
 
-  wrapper.appendChild(recentContainer);
-  wrapper.appendChild(cardsContainer);
-  wrapper.appendChild(textInput);
-  wrapper.appendChild(askBtn);
-  container.appendChild(wrapper);
-
-  /** @type {((question: string) => void) | null} */
-  let onAsk = null;
-  /** @type {(() => void) | null} */
-  let onSelectionChange = null;
-
-  /** @returns {string | null} */
-  function getSelectedQuestion() {
-    if (selectedPrompt) return selectedPrompt;
-    const text = textInput.value.trim();
-    return text || null;
+  function show() {
+    if (!enabled) {
+      // Still allow the palette to open while running so its state is visible,
+      // but the input area stays disabled.
+    }
+    panel.hidden = false;
+    if (enabled) textInput.focus();
   }
 
-  function updateAskButton() {
-    askBtn.disabled = !enabled || !getSelectedQuestion();
+  function hide() {
+    panel.hidden = true;
   }
-
-  /**
-   * @param {boolean} value
-   * @returns {void}
-   */
-  function setEnabled(value) {
-    enabled = value;
-    textInput.disabled = !value;
-    cardsContainer.querySelectorAll(".prompt-card").forEach((/** @type {Element} */ c) => {
-      /** @type {HTMLButtonElement} */ (c).disabled = !value;
-    });
-    updateAskButton();
-  }
-
-  // Hook up selection change to update ask button
-  onSelectionChange = updateAskButton;
 
   return {
     onAsk(fn) { onAsk = fn; },
-    updateRecentQuestions,
-    getSelectedQuestion,
-    setEnabled,
+    updateRecentQuestions: renderRecentQuestions,
+    getSelectedQuestion() {
+      if (selectedPrompt) return selectedPrompt;
+      const text = textInput.value.trim();
+      return text || null;
+    },
+    setEnabled(value) {
+      enabled = value;
+      textInput.disabled = !value;
+      runningHint.style.display = value ? "none" : "block";
+      body.classList.toggle("disabled", !value);
+      cardsContainer.querySelectorAll(".prompt-card").forEach((/** @type {Element} */ c) => {
+        /** @type {HTMLButtonElement} */ (c).disabled = !value;
+      });
+      recentList.querySelectorAll(".recent-item").forEach((/** @type {Element} */ c) => {
+        /** @type {HTMLButtonElement} */ (c).disabled = !value;
+      });
+    },
+    selectByKeyboard,
+    show,
+    hide,
+    isOpen() { return !panel.hidden; },
+    panel,
   };
 }
