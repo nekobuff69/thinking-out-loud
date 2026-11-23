@@ -116,4 +116,9 @@
   opacity: 1;
   text-shadow: 0 0 8px currentColor;
   font-weight: 600;
+  /* A progress underline that grows across the word as audio plays. */
+  background-image: linear-gradient(currentColor, currentColor);
+  background-repeat: no-repeat;
+  background-position: 0 100%;
+  background-size: var(--karaoke-fill, 0%) 2px;
 }

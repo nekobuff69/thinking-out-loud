@@ -106,7 +106,7 @@ export const config = {
 		chunkerTimeoutMs: 4000, // ms of silence before flushing buffer
 		chunkerMinWordsForTimeout: 10, // min words needed before timeout fires
 		chunkerFlushOnPunctuation: true, // split on punctuation characters
-		chunkerPunctuation: ".!?;", // which chars count as punctuation
+		chunkerPunctuation: ".!?;。！？；", // which chars count as punctuation (incl. CJK)
 		randomizePlayback: true, // shuffle which voice speaks first/second/third per session
 	},
 

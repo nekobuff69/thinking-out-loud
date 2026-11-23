@@ -1,3 +1,5 @@
+import { segmentWords } from "../ui/word-segmenter.js";
+
 /**
  * @typedef {import("../config.js").ModelConfig} ModelConfig
  * @typedef {import("../config.js").TTSConfig} TTSConfig
@@ -68,7 +70,7 @@ export class ChannelPipeline {
 	// Streaming TTS state
 	/** @type {string} */
 	#unsentBuffer = "";
-	/** @type {{ feed: (pcm: Float32Array, sampleRate: number) => void, end: () => void, stop: () => void } | null} */
+	/** @type {{ feed: (pcm: Float32Array, sampleRate: number) => { scheduledTime: number }, getPlaybackPosition?: () => { samples: number, sampleRate: number }, end: () => void, stop: () => void } | null} */
 	#audioStream = null;
 	/** @type {boolean} */
 	#ttsStreamOpened = false;
@@ -78,26 +80,12 @@ export class ChannelPipeline {
 	#isCapped = false;
 	/** @type {number} */
 	#ttsWordOffset = 0;
-	/** @type {number} */
-	#msPerWord = 200; // adaptive, default ~5 words/sec
-	/** @type {number} */
-	_lastSentenceStartTime = 0;
-	/** @type {number} */
-	_lastSentenceWordCount = 0;
-	/** @type {number} */
-	#karaokeSentenceWordCount = 0;
-	/** @type {number} */
-	#karaokeSentenceStartIndex = 0;
-	/** @type {boolean} */
-	#karaokeStartedForSentence = false;
-	/** @type {number} */
-	#sentenceTotalPcmSamples = 0;
-	/** @type {number} */
-	#sentenceSampleRate = 24000;
-	/** @type {ReturnType<typeof setTimeout> | null} */
-	#karaokeTimeoutId = null;
-	/** @type {number} Actual sentence duration once onDone fires; 0 until then. */
-	#karaokePendingDuration = 0;
+	/** @type {number} Learned ms/word, carried across sentences as a fallback estimate. */
+	#msPerWord = 200;
+	// Per-sentence karaoke timing lives in #sendNextSentence() closures, never
+	// in instance fields. TTS generation runs ahead of playback, so the next
+	// sentence is scheduled while the previous one is still being heard;
+	// shared fields would reset the in-flight highlight and make it jump.
 
 	/** @type {string} */
 	#liveBuffer = "";
@@ -185,16 +173,9 @@ export class ChannelPipeline {
 		this.#sentenceQueue = [];
 		this.#currentSentenceActive = false;
 		this.#ttsWordOffset = 0;
-		this.#msPerWord = 200;
-		this._lastSentenceStartTime = 0;
-		this._lastSentenceWordCount = 0;
-		this.#karaokeSentenceWordCount = 0;
-		this.#karaokeSentenceStartIndex = 0;
-		this.#karaokeStartedForSentence = false;
-		this.#sentenceTotalPcmSamples = 0;
-		this.#sentenceSampleRate = 24000;
-		this.#karaokeTimeoutId = null;
-		this.#karaokePendingDuration = 0;
+		// #msPerWord intentionally survives across turns — it is learned from
+		// real audio and makes the pre-onDone fallback estimate progressively
+		// more accurate.
 		// Preserve #paused state — orchestrator may have paused this pipeline
 		// before startStream is called (monologue mode). Resetting to false
 		// would un-pause pipelines that should stay silent until resumed.
@@ -318,6 +299,9 @@ export class ChannelPipeline {
 			this.#reconnectUnsub = this.#eventBus.on("tts-reconnect", () => {
 				if (this.#audioStream && this.#channel) {
 					this.#audioStream = this.#channel.openStream();
+					// A new stream restarts the playback-head timeline. The
+					// in-flight sentence closes its own state via its closure.
+					this.#column.stopKaraoke?.();
 				}
 			});
 		}
@@ -342,75 +326,127 @@ export class ChannelPipeline {
 		}
 
 		const sentenceText = /** @type {string} */ (this.#sentenceQueue.shift());
-		// Karaoke: calculate word position and store for delayed start
-		const sentenceWordCount = sentenceText.split(/\s+/).filter(Boolean).length;
+
+		// A sentence ending in punctuation can leave its last word as an
+		// unclosed span. Close it before indexing so wordSpans indices and
+		// segmentWords() indices describe the same sequence.
+		this.#column.finalizeWord?.();
+
+		const sentenceWordCount = segmentWords(sentenceText).length;
 		const startWordIndex = this.#ttsWordOffset;
 		this.#ttsWordOffset += sentenceWordCount;
-		this.#karaokeSentenceWordCount = sentenceWordCount;
-		this.#karaokeSentenceStartIndex = startWordIndex;
-		this.#karaokeStartedForSentence = false;
-		this.#sentenceTotalPcmSamples = 0;
-		this.#karaokePendingDuration = 0;
+
+		// Per-sentence timing state is closure-local on purpose: the next
+		// sentence is generated while this one is still playing, and mutating
+		// shared fields would corrupt the in-flight highlight.
+		let startSamples = 0;
+		let audioStartTime = 0;
+		let totalSamples = 0;
+		let sentenceSampleRate = 24000;
+		let finalized = false;
+		const denominatorSamples = Math.max(
+			1,
+			Math.round((sentenceWordCount * this.#msPerWord * 24000) / 1000),
+		);
+		let blendPlayed = 0;
+		let blendProgress = 0;
+		let blendTotal = 0;
+
 		this.#currentSentenceActive = true;
 		this.#ensureTtsStream();
+
+		/**
+		 * Playback-derived timing for this sentence. `progress` is negative
+		 * until the scheduled audio actually starts, so no word lights up
+		 * before anything is audible.
+		 * @returns {{ progress: number, final: boolean }}
+		 */
+		const getTiming = () => {
+			const stream = this.#audioStream;
+			const ctx = this.#channel?.ctx;
+			if (!stream?.getPlaybackPosition) return { progress: -1, final: false };
+			if (
+				ctx &&
+				typeof ctx.currentTime === "number" &&
+				ctx.currentTime < audioStartTime
+			) {
+				return { progress: -1, final: false };
+			}
+
+			const position = stream.getPlaybackPosition();
+			const played = Math.max(0, position.samples - startSamples);
+
+			let progress;
+			if (!finalized) {
+				// Fixed denominator for the whole sentence. Dividing by the
+				// growing generated-sample count would stall the highlight and
+				// then make it jump once playback caught up.
+				progress = played / denominatorSamples;
+			} else if (blendTotal > blendPlayed) {
+				// Continuous affine hand-off: begins exactly where the estimate
+				// left off and reaches 1 precisely when the audio ends.
+				const span = blendTotal - blendPlayed;
+				progress =
+					blendProgress + ((played - blendPlayed) * (1 - blendProgress)) / span;
+			} else {
+				progress = 1;
+			}
+
+			return {
+				progress: Math.max(0, Math.min(1, progress)),
+				final: finalized,
+			};
+		};
+
+		let karaokeStarted = false;
 
 		this.#ttsEngine.startStream(
 			sentenceText,
 			this.#model.voice,
 			(pcm, sampleRate) => {
-				// Track PCM samples for duration calculation
-				this.#sentenceTotalPcmSamples += pcm.length;
-				this.#sentenceSampleRate = sampleRate;
+				totalSamples += pcm.length;
+				sentenceSampleRate = sampleRate;
 
-				// Feed to audio first — returns scheduled playback time
-				const { scheduledTime } = this.#audioStream?.feed(pcm, sampleRate) ?? {
-					scheduledTime: 0,
-				};
+				const stream = this.#audioStream;
+				if (!stream) return;
 
-				// Start karaoke on first audio chunk, aligned to actual playback schedule
-				if (!this.#karaokeStartedForSentence && this.#channel) {
-					this.#karaokeStartedForSentence = true;
-					const ctx = this.#channel.ctx;
-					const delayMs = Math.max(0, (scheduledTime - ctx.currentTime) * 1000);
-					this.#karaokeTimeoutId = setTimeout(() => {
-						// Use actual duration if onDone already fired, else estimate
-						const duration =
-							this.#karaokePendingDuration ||
-							this.#karaokeSentenceWordCount * this.#msPerWord;
-						this.#column.startKaraoke?.(
-							this.#karaokeSentenceStartIndex,
-							this.#karaokeSentenceWordCount,
-							duration,
-						);
-					}, delayMs);
+				if (!karaokeStarted) {
+					karaokeStarted = true;
+					// Anchor at the playhead BEFORE this chunk is scheduled —
+					// the chunk itself has not been heard yet.
+					startSamples = stream.getPlaybackPosition?.()?.samples ?? 0;
+					const { scheduledTime } = stream.feed(pcm, sampleRate);
+					audioStartTime = scheduledTime;
+					this.#column.startKaraoke?.(
+						startWordIndex,
+						sentenceWordCount,
+						getTiming,
+					);
+					return;
 				}
+
+				stream.feed(pcm, sampleRate);
 			},
 			{
 				onDone: () => {
-					// Compute actual audio duration from PCM samples
-					const actualAudioDurationMs =
-						(this.#sentenceTotalPcmSamples / this.#sentenceSampleRate) * 1000;
-
-					// Update karaoke timing with actual duration
-					if (actualAudioDurationMs > 0 && this.#karaokeSentenceWordCount > 0) {
-						// Store for pending startKaraoke if its setTimeout hasn't fired yet
-						// (happens when backlog > generation time). updateKaraokeDuration is
-						// a no-op until the RAF loop starts, so this bridges that gap.
-						this.#karaokePendingDuration = actualAudioDurationMs;
-						this.#column.updateKaraokeDuration?.(actualAudioDurationMs);
-						// Update adaptive timing for next sentence
-						this.#msPerWord =
-							actualAudioDurationMs / this.#karaokeSentenceWordCount;
+					// Generation finished — NOT playback finished. Capture a
+					// hand-off point so the exact timeline starts where the
+					// estimate left off instead of snapping.
+					if (totalSamples > 0) {
+						const pos = this.#audioStream?.getPlaybackPosition?.();
+						blendPlayed = Math.max(0, (pos?.samples ?? 0) - startSamples);
+						blendProgress = Math.min(1, blendPlayed / denominatorSamples);
+						blendTotal = totalSamples;
+						if (sentenceWordCount > 0) {
+							this.#msPerWord =
+								((totalSamples / sentenceSampleRate) * 1000) / sentenceWordCount;
+						}
 					}
-
-					// Clear karaoke timeout (animation already running or finished)
-
-					// Karaoke will stop naturally when RAF loop reaches end of sentence
+					finalized = true;
 					this.#currentSentenceActive = false;
 					this.#sendNextSentence();
 				},
 				onError: (msg) => {
-					this.#clearKaraokeTimeout();
 					this.#column.stopKaraoke?.();
 					this.#currentSentenceActive = false;
 					this.setError(msg);
@@ -470,10 +506,7 @@ export class ChannelPipeline {
 		return (
 			last === " " ||
 			last === "\n" ||
-			last === "." ||
-			last === "!" ||
-			last === "?" ||
-			last === ";"
+			".!?;。！？；".includes(last)
 		);
 	}
 
@@ -486,7 +519,7 @@ export class ChannelPipeline {
 		const trimmed = text.trimEnd();
 		if (trimmed.length === 0) return false;
 		const last = trimmed[trimmed.length - 1];
-		return last === "." || last === "!" || last === "?" || last === ";";
+		return ".!?;。！？；".includes(last);
 	}
 
 	// ------------------------------------------------------------------
@@ -593,14 +626,8 @@ export class ChannelPipeline {
 		this.#sentenceQueue.length = 0;
 		this.#currentSentenceActive = false;
 		this.#audioStream?.stop();
-		this.#clearKaraokeTimeout();
 		this.#column.stopKaraoke?.();
 		this.#ttsWordOffset = 0;
-		this.#karaokeSentenceWordCount = 0;
-		this.#karaokeSentenceStartIndex = 0;
-		this.#karaokeStartedForSentence = false;
-		this.#sentenceTotalPcmSamples = 0;
-		this.#karaokePendingDuration = 0;
 
 		this.#cleanupReconnectListener();
 		this.#ttsActive = false;
@@ -635,13 +662,9 @@ export class ChannelPipeline {
 		this.#ttsEngine.stop();
 		this.#sentenceQueue.length = 0;
 		this.#currentSentenceActive = false;
-		this.#clearKaraokeTimeout();
 		this.#column.stopKaraoke?.();
-		this.#karaokeSentenceWordCount = 0;
-		this.#karaokeSentenceStartIndex = 0;
-		this.#karaokeStartedForSentence = false;
-		this.#sentenceTotalPcmSamples = 0;
-		this.#karaokePendingDuration = 0;
+		// resume() revoices the full reasoning text from the first word.
+		this.#ttsWordOffset = 0;
 
 		this.#ensureTtsStream();
 
@@ -748,17 +771,6 @@ export class ChannelPipeline {
 		if (this.#reconnectUnsub) {
 			this.#reconnectUnsub();
 			this.#reconnectUnsub = null;
-		}
-	}
-
-	/**
-	 * Clear the scheduled karaoke timeout, if any.
-	 * Safe to call even if no timeout is pending.
-	 */
-	#clearKaraokeTimeout() {
-		if (this.#karaokeTimeoutId !== null) {
-			clearTimeout(this.#karaokeTimeoutId);
-			this.#karaokeTimeoutId = null;
 		}
 	}
 

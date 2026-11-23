@@ -2,7 +2,7 @@
  * @typedef {Object} AudioGraphChannel
  * @property {(buffer: AudioBuffer, onEnd?: () => void) => AudioBufferSourceNode} play
  * @property {(streamFn: (onChunk: (pcm: Float32Array, sampleRate: number) => void) => (() => void)) => { stop: () => void }} playStream
- * @property {() => { feed: (pcm: Float32Array, sampleRate: number) => { scheduledTime: number }, end: () => void, stop: () => void }} openStream
+ * @property {() => { feed: (pcm: Float32Array, sampleRate: number) => { scheduledTime: number }, getPlaybackPosition: () => { samples: number, sampleRate: number }, end: () => void, stop: () => void }} openStream
  * @property {AudioContext} ctx
  * @property {AnalyserNode} analyser
  * @property {GainNode} gain
@@ -205,7 +205,7 @@ export class AudioGraph {
 		 *
 		 * Designed for streaming TTS: PCM frames arrive from the TTS backend.
 		 * Each `feed()` call creates and schedules an AudioBufferSourceNode.
-		 * @returns {{ feed: (pcm: Float32Array, sampleRate: number) => { scheduledTime: number }, end: () => void, stop: () => void }}
+		 * @returns {{ feed: (pcm: Float32Array, sampleRate: number) => { scheduledTime: number }, getPlaybackPosition: () => { samples: number, sampleRate: number }, end: () => void, stop: () => void }}
 		 */
 		const openStream = () => {
 			if (chEntry.audible) {
@@ -220,6 +220,15 @@ export class AudioGraph {
 			// Gapless scheduling: track the next play time so buffers
 			// play back-to-back without overlap or gaps.
 			let nextStartTime = 0;
+
+			// Playback head. Every scheduled buffer is recorded with its
+			// AudioContext time span so we can report how many samples have
+			// actually been heard. Gaps caused by underruns are NOT counted:
+			// this keeps the highlight from running ahead of the audio.
+			/** @type {Array<{startTime: number, endTime: number, samples: number, sampleRate: number}>} */
+			const scheduledSegments = [];
+			let playedSamplesBase = 0;
+			let lastSampleRate = 24000;
 
 			// Pre-buffer: accumulate frames before scheduling playback.
 			// This creates a time cushion that absorbs delivery jitter.
@@ -254,6 +263,12 @@ export class AudioGraph {
 				nextStartTime += buffer.duration;
 
 				sources.add(source);
+				scheduledSegments.push({
+					startTime: scheduledTime,
+					endTime: scheduledTime + buffer.duration,
+					samples: pcm.length,
+					sampleRate,
+				});
 
 				source.onended = () => {
 					sources.delete(source);
@@ -309,6 +324,41 @@ export class AudioGraph {
 			};
 
 			/**
+			 * Cumulative PCM samples actually played at the current audio
+			 * clock position. Fully played segments are folded into a base
+			 * counter; only the segment under the playhead is interpolated.
+			 * A scheduling gap advances the clock but adds no samples, so
+			 * the reported position never overtakes audible audio.
+			 *
+			 * @returns {{ samples: number, sampleRate: number }}
+			 */
+			const getPlaybackPosition = () => {
+				const now = ctx.currentTime || 0;
+				while (scheduledSegments.length > 0 && now >= scheduledSegments[0].endTime) {
+					const seg = /** @type {{startTime: number, endTime: number, samples: number, sampleRate: number}} */ (
+						scheduledSegments.shift()
+					);
+					playedSamplesBase += seg.samples;
+					lastSampleRate = seg.sampleRate;
+				}
+
+				let played = playedSamplesBase;
+				if (scheduledSegments.length > 0) {
+					const seg = scheduledSegments[0];
+					if (now > seg.startTime && seg.endTime > seg.startTime) {
+						const fraction = Math.min(
+							1,
+							(now - seg.startTime) / (seg.endTime - seg.startTime),
+						);
+						played += seg.samples * fraction;
+						lastSampleRate = seg.sampleRate;
+					}
+				}
+
+				return { samples: played, sampleRate: lastSampleRate };
+			};
+
+			/**
 			 * Signal no more frames. Flushes any remaining pre-buffered frames
 			 * and decrements activeCount.
 			 */
@@ -345,7 +395,7 @@ export class AudioGraph {
 				}
 			};
 
-			return { feed, end, stop };
+			return { feed, getPlaybackPosition, end, stop };
 		};
 
 		/**
