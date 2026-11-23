@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thinking Out Loud · B-2 per-column waveform spec</title>
+<style>
+  :root{--page:#f5f4f0;--ink:#1c1b19;--muted:#6d6a64;--line:#dcd9d2;--card:#fff}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--page);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.6}
+  .page{max-width:1220px;margin:0 auto;padding:52px 28px 96px}
+  .eyebrow{font:12px ui-monospace,Consolas,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  h1{font-size:32px;font-weight:600;letter-spacing:-.02em;margin:12px 0 10px}
+  h2{font-size:22px;font-weight:600;margin:54px 0 14px}
+  .lede{font-size:15px;color:var(--muted);max-width:880px}
+  .scope{display:flex;gap:8px;flex-wrap:wrap;margin:22px 0 0}
+  .chip{font:12px ui-monospace,Consolas,monospace;border:1px solid var(--line);background:var(--card);padding:6px 12px;border-radius:999px;color:#4a4843}
+  .chip.del{border-color:#e0c0b6;background:#fbefec;color:#8a4234}
+  .chip.keep{border-color:#c4d9cd;background:#eef5f0;color:#2c5a49}
+  .chip.new{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .note{background:#eef2ef;border:1px solid #d6e2da;border-radius:12px;padding:15px 20px;font-size:13px;color:#2c4a41;margin-top:20px}
+  .note b{font-weight:600}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px}
+  th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f0efeb;font-weight:600;color:#4a4843}
+  tr:last-child td{border-bottom:0}
+  code{font:12px ui-monospace,Consolas,monospace;background:#eeece7;padding:2px 5px;border-radius:4px}
+  .rules{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+  .rule{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+  .rule h4{font-size:14px;font-weight:600;margin-bottom:10px}
+  .rule ol{padding-left:18px;font-size:13px;color:#3b3935;line-height:1.85}
+
+  /* ---------- B-2 screen ---------- */
+  .screen{
+    --bg:#080b08;--fg:#b6ff1f;--ac:#d6ff6b;--ln:rgba(182,255,31,.5);--sf:rgba(182,255,31,.08);
+    height:590px;position:relative;overflow:hidden;border:1px solid var(--ln);border-radius:12px;
+    background:var(--bg);color:var(--fg);font:11px "Courier New",ui-monospace,Consolas,monospace;
+    display:flex;flex-direction:column;
+  }
+  .qblock{height:100px;flex:none;position:relative;display:flex;flex-direction:column;justify-content:center;padding:0 26px;cursor:pointer;background:rgba(182,255,31,.02)}
+  .qblock:hover{background:var(--sf)}
+  .qmeta{display:flex;gap:18px;font-size:9px;letter-spacing:.2em;text-transform:uppercase;opacity:.62;margin-bottom:10px}
+  .qmeta b{color:var(--ac)}
+  .qtext{font-size:20px;line-height:1.4;letter-spacing:-.01em;max-width:94%;color:var(--fg)}
+  .qhint{position:absolute;right:24px;bottom:11px;font-size:9px;letter-spacing:.14em;text-transform:uppercase;opacity:.42}
+  .qanchor{position:absolute;left:26px;top:12px;font-size:9px;letter-spacing:.16em;text-transform:uppercase;opacity:.5}
+
+  .stage{flex:1;min-height:0;display:flex}
+  .cols{flex:1;min-width:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .col{position:relative;display:flex;flex-direction:column;min-width:0;padding:14px 14px 0;border-right:1px solid var(--ln)}
+  .col:last-child{border-right:0}
+  .col::before{content:"";position:absolute;top:4px;left:4px;width:9px;height:9px;border-top:1px solid var(--ln);border-left:1px solid var(--ln)}
+  .col::after{content:"";position:absolute;bottom:4px;right:4px;width:9px;height:9px;border-bottom:1px solid var(--ln);border-right:1px solid var(--ln)}
+  .chead{display:flex;align-items:center;gap:7px;padding-bottom:8px;border-bottom:1px solid var(--ln);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+  .chead .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chead .cid{opacity:.6;white-space:nowrap}
+  .ms{display:flex;gap:3px;flex:none}
+  .ms i{font-style:normal;width:17px;height:17px;display:grid;place-items:center;border:1px solid var(--ln);font-size:9px;cursor:pointer}
+  .ms i.on{background:var(--ac);color:var(--bg);border-color:var(--ac)}
+  .body{flex:1;min-height:0;overflow:hidden;font-size:11px;line-height:1.85;padding-top:11px}
+  .body p{margin-bottom:9px}
+  .past{opacity:.38}
+  .act{background:var(--sf);box-shadow:inset 2px 0 0 var(--ac);padding-left:5px;color:var(--ac);font-weight:700}
+  .wave{height:78px;flex:none;border-top:1px solid var(--ln);position:relative;cursor:pointer}
+  .wave:hover{background:var(--sf)}
+  .wave canvas{width:100%;height:72px;display:block}
+
+  .tools{height:28px;flex:none;display:flex;align-items:center;border-top:1px solid var(--ln);padding:0 16px;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:rgba(182,255,31,.55)}
+  .tools .c{padding:0 14px;border-right:1px solid var(--ln);white-space:nowrap}
+  .tools .c:first-child{padding-left:0}
+  .tools .c b{color:var(--ac);font-weight:700}
+  .tools .grow{flex:1;border-right:0;text-align:right;padding-right:0}
+  .stop{display:none;font:9px "Courier New",ui-monospace,Consolas,monospace;letter-spacing:.14em;text-transform:uppercase;background:transparent;border:1px solid var(--ac);color:var(--ac);padding:3px 9px;cursor:pointer;white-space:nowrap}
+  .screen.running .stop{display:block}
+
+  .hist{width:30px;flex:none;background:var(--bg);border-left:1px solid var(--ln);display:flex;flex-direction:column;overflow:hidden;transition:width .22s ease}
+  .hist.open{width:246px}
+  .hist-tab{width:30px;flex:none;display:flex;align-items:center;justify-content:center;gap:9px;padding:12px 0;cursor:pointer;height:100%;writing-mode:vertical-rl;font-size:10px;letter-spacing:.2em;text-transform:uppercase;white-space:nowrap}
+  .hist-tab:hover{background:var(--sf)}
+  .hist-body{display:none;flex:1;min-height:0;flex-direction:column;padding:12px 11px;gap:7px}
+  .hist.open .hist-body{display:flex}
+  .hist.open .hist-tab{display:none}
+  .hist-body h4{font-size:10px;letter-spacing:.16em;text-transform:uppercase;padding-bottom:8px;border-bottom:1px solid var(--ln);display:flex;justify-content:space-between}
+  .hist-body h4 span{cursor:pointer;opacity:.7}
+  .hi{border:1px solid var(--ln);padding:7px 8px;font-size:10px;line-height:1.5;cursor:pointer;opacity:.78}
+  .hi:hover{opacity:1;background:var(--sf)}
+  .hi.on{border-left:3px solid var(--ac);opacity:1;background:var(--sf)}
+  .hi b{color:var(--ac)}
+  .hi span{display:block;opacity:.65;margin-top:3px;font-size:9px}
+  .hist-body .hint{margin-top:auto;font-size:9px;letter-spacing:.1em;text-transform:uppercase;opacity:.6;border-top:1px solid var(--ln);padding-top:8px}
+
+  .pal-wrap{position:absolute;inset:0;z-index:8;display:none;align-items:flex-start;justify-content:center;background:rgba(0,0,0,.64)}
+  .pal-wrap.open{display:flex}
+  .pal{width:min(500px,92%);margin-top:56px;background:#0b100b;border:1px solid var(--fg);box-shadow:0 0 0 5px rgba(182,255,31,.06);padding:18px;position:relative;max-height:calc(100% - 80px);overflow-y:auto}
+  .pal::before,.pal::after{content:"";position:absolute;width:12px;height:12px;border:1px solid var(--fg)}
+  .pal::before{top:-6px;left:-6px;border-right:0;border-bottom:0}
+  .pal::after{bottom:-6px;right:-6px;border-left:0;border-top:0}
+  .pal h3{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ac);padding-bottom:10px;border-bottom:1px solid var(--ln);display:flex;justify-content:space-between}
+  .pal h3 span{cursor:pointer;opacity:.7}
+  .pal .sub{font-size:10px;opacity:.6;letter-spacing:.1em;margin:13px 0 8px;text-transform:uppercase}
+  .qsec{position:relative}
+  .screen.running .pal .qsec{opacity:.34;pointer-events:none}
+  .preset{display:block;width:100%;text-align:left;font:11px "Courier New",ui-monospace,Consolas,monospace;line-height:1.5;background:transparent;border:1px solid var(--ln);color:var(--fg);padding:8px 10px;margin-bottom:5px;cursor:pointer}
+  .preset:hover,.preset.on{background:var(--sf);border-color:var(--ac);color:var(--ac)}
+  .preset i{font-style:normal;opacity:.55;margin-right:9px}
+  .pal textarea{width:100%;height:56px;resize:none;background:#060906;border:1px solid var(--ln);color:var(--fg);font:11px "Courier New",ui-monospace,Consolas,monospace;line-height:1.5;padding:8px 10px;outline:none}
+  .pal textarea:focus{border-color:var(--ac)}
+  .runhint{display:none;font-size:10px;letter-spacing:.1em;color:var(--ac);margin-top:8px;text-transform:uppercase}
+  .screen.running .pal .runhint{display:block}
+  .pal .pf{margin-top:12px;font-size:9px;letter-spacing:.1em;opacity:.6;text-transform:uppercase}
+
+  .vismenu{position:absolute;left:50%;bottom:104px;transform:translateX(-50%);width:min(520px,86%);z-index:7;display:none;background:#0b100b;border:1px solid var(--fg);padding:14px;box-shadow:0 0 0 5px rgba(182,255,31,.06)}
+  .vismenu.open{display:block}
+  .vismenu::after{content:"";position:absolute;left:var(--anchor-x,50%);bottom:-9px;width:1px;height:9px;background:var(--fg)}
+  .vm-head{display:flex;justify-content:space-between;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--ac);padding-bottom:10px;border-bottom:1px solid var(--ln)}
+  .vm-head span{cursor:pointer;opacity:.7}
+  .vm-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}
+  .vm-opt{background:transparent;border:1px solid var(--ln);color:var(--fg);padding:7px;cursor:pointer;text-align:left;font:9px "Courier New",ui-monospace,Consolas,monospace;letter-spacing:.08em;text-transform:uppercase;line-height:1.35}
+  .vm-opt:hover{background:var(--sf)}
+  .vm-opt.on{border-color:var(--ac);background:var(--sf);color:var(--ac)}
+  .vm-opt canvas{width:100%;height:34px;display:block;margin:0 0 7px;border-top:1px solid var(--ln);border-bottom:1px solid var(--ln)}
+  .vm-foot{margin-top:10px;font-size:9px;letter-spacing:.1em;opacity:.55;text-transform:uppercase}
+  .toast{position:absolute;left:50%;bottom:38px;transform:translateX(-50%);z-index:9;background:var(--ac);color:var(--bg);font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:7px 14px;display:none}
+  .toast.show{display:block}
+
+  .wctl{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:16px 0 18px}
+  .wctl .btn2{font:12px ui-monospace,Consolas,monospace;border:1px solid var(--line);background:var(--card);padding:8px 14px;border-radius:8px;cursor:pointer;color:var(--ink)}
+  .wctl .btn2.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .wctl .pick{font-size:13px;color:var(--muted)}
+  .wgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  .wcard{background:#080b08;border:1px solid rgba(182,255,31,.35);border-radius:10px;padding:14px;color:#b6ff1f}
+  .wcard .wh{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+  .wcard .wh b{font-size:13px;font-weight:600}
+  .wcard .src{font:10px ui-monospace,Consolas,monospace;color:#7ea33c;letter-spacing:.04em}
+  .wcard canvas{width:100%;height:72px;display:block;margin:10px 0;border-top:1px solid rgba(182,255,31,.25);border-bottom:1px solid rgba(182,255,31,.25)}
+  .wcard .d{font:11px/1.65 ui-monospace,Consolas,monospace;color:#9fc45e;margin-bottom:8px;min-height:36px}
+  .wcard ul{list-style:none;font-size:11px;line-height:1.6;color:#a9cf72}
+  .wcard li{padding-left:12px;position:relative;margin-bottom:3px}
+  .wcard li::before{content:"";position:absolute;left:0;top:.6em;width:5px;height:5px;border-radius:50%;background:#b6ff1f}
+  .wcard li.bad::before{background:#e08a5b}
+  .wcard .wf{display:flex;align-items:center;gap:6px;margin-top:12px;flex-wrap:wrap}
+  .wcard .tag{font:10px ui-monospace,Consolas,monospace;letter-spacing:.08em;border:1px solid rgba(182,255,31,.4);padding:3px 7px;border-radius:4px}
+  .gbtn{font:9px ui-monospace,Consolas,monospace;letter-spacing:.08em;background:transparent;border:1px solid rgba(182,255,31,.5);color:#b6ff1f;padding:4px 7px;border-radius:4px;cursor:pointer}
+  .gbtn:hover{background:#d6ff6b;color:#080b08;border-color:#d6ff6b}
+  .gbtn.on{background:#d6ff6b;color:#080b08;border-color:#d6ff6b}
+  .gbtn.first{margin-left:auto}
+  .dropped{font-size:12px;color:var(--muted);margin-top:12px}
+  .impl ol{padding-left:20px;font-size:13px;color:#3b3935;line-height:1.9}
+  .foot-note{margin-top:24px;font-size:12px;color:var(--muted);line-height:1.8}
+  @media(max-width:980px){
+    .rules{grid-template-columns:1fr}
+    .screen{height:640px}
+    .qtext{font-size:16px}
+    .tools .c:nth-child(n+4){display:none}
+    .wgrid{grid-template-columns:1fr}
+    .vm-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  }
+  @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="eyebrow">Thinking Out Loud · B-2 locked · per-column waveform · 2026-11-24</div>
+    <h1>波形按列独立 + V 键洗牌</h1>
+    <p class="lede">布局与交互落点保持不变。波形不再使用任何代号：面板内只有纯动画画面，菜单里只有动画名字。每个 column 各持一个变体，点哪一列只改那一列；<code>V</code> 随机洗牌三列。</p>
+    <div class="scope">
+      <span class="chip new">每列独立 visual，选项只作用于被点列</span>
+      <span class="chip new">V = 随机 shuffle 三列 visual</span>
+      <span class="chip keep">Shift+V · 复位三列为默认 Oscilloscope</span>
+      <span class="chip del">移除 · 所有变体代号（面板 / 菜单 / 工具带 / 提示）</span>
+      <span class="chip del">移除 · 波形变更后的 notification</span>
+      <span class="chip keep">布局 / 浮层 / 全英文文案 / 推挤式 History · 不变</span>
+    </div>
+    <div class="note"><b>去代号：</b> 四种动画一律以名字称呼——<b>Mirrored bars</b> / <b>Oscilloscope</b> / <b>Dot matrix</b> / <b>Radial voiceprint</b>。波形面板内不放置任何文字、角标或编号，只保留 canvas；可点性由 <code>cursor:pointer</code> 与 hover 底色传达，菜单标题显示目标列。工具带的 <code>WAVE</code> 改为按列显示名字，例如 <code>SCOPE / BARS / MATRIX</code>，仍是被动只读指示。<br><b>反馈原则：</b> 波形变化本身就是反馈，shuffle / 复位 / 菜单点选 / 卡片应用后一律<b>不弹 notification</b>；只有 session 状态（开始 / 停止 / 保存 / 重播 / 运行中拦截）保留提示。</div>
+  </header>
+
+  <h2>一、代号与提示清理范围</h2>
+  <table>
+    <thead><tr><th style="width:22%">位置</th><th>之前</th><th>现在</th></tr></thead>
+    <tbody>
+      <tr><td>波形面板</td><td>右上角代号角标压在动画上</td><td><b>整个角标删除</b>，画面上零文字；hover 仅轻微底色变化</td></tr>
+      <tr><td>波形菜单选项</td><td>代号 + 短名 + 预览 + 全名</td><td>只有<b>实时预览 + 动画名字</b>；当前列所用项以边框高亮</td></tr>
+      <tr><td>工具带 WAVE</td><td>三列代号串</td><td><code>SCOPE / BARS / MATRIX</code>，按列顺序显示名字，只读</td></tr>
+      <tr><td>波形变更提示</td><td>每次切换都弹一条 toast：apply 后显示「某列 → 某动画」，shuffle 后显示新组合</td><td><b>全部移除</b>；动画变化即反馈，波形相关操作零 notification</td></tr>
+      <tr><td>对比卡片标题</td><td>代号 + 名字</td><td>只有名字；<code>CH 01/02/03</code> 按钮保留（频道编号，非动画代号）</td></tr>
+      <tr><td>文档正文</td><td>用代号指代变体</td><td>一律用名字；淘汰项改称 Chart recorder / Spectral ridge</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><b>保留：</b> <code>V</code> 与 <code>Shift+V</code> 是快捷键字母，不是变体代号，照旧。四种动画的内部 id（<code>bars</code> / <code>scope</code> / <code>dots</code> / <code>radial</code>）属于代码标识符，不出现在界面上。toast 组件本身保留，仅供 session 状态使用。</div>
+
+  <h2>二、两项功能（不变）</h2>
+  <table>
+    <thead><tr><th style="width:22%">功能</th><th>行为</th><th style="width:24%">影响范围</th></tr></thead>
+    <tbody>
+      <tr><td><b>每列独立 visual</b></td><td>点哪一列的波形区，就近菜单锚定并只作用于<b>那一列</b>；菜单标题带 <code>CH 02 / WAVEFORM</code>，四个选项各带实时预览与名字，点选即改该列并收起。其余两列完全不变。</td><td>单列，不联动</td></tr>
+      <tr><td><b>V 键随机洗牌</b></td><td>从四种动画中随机抽出<b>三个互不相同的</b>分配给三列，并保证新组合与当前不同；<code>Shift+V</code> 复位三列为默认 Oscilloscope。洗牌与复位都<b>不打开菜单、不弹 notification</b>，不产生任何遮挡。</td><td>三列同时，随机重排而非统一赋值</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><b>shuffle 口径：</b> 4 选 3 的随机排列，共 24 种组合，三列互不相同；若你要允许两列撞同一个动画，改一处抽样逻辑即可。<code>Shift+V</code> 的复位语义是本轮新分配的。</div>
+
+  <h2>三、快捷键与状态</h2>
+  <div class="rules">
+    <div class="rule"><h4>快捷键</h4><ol>
+      <li><code>V</code> 随机洗牌三列，不打开菜单、不弹 notification。</li>
+      <li><code>Shift+V</code> 复位三列为 Oscilloscope，同样无提示。</li>
+      <li>四种波形变更（shuffle / 复位 / 菜单点选 / 卡片应用）都<b>不触发 toast</b>；画面变化即反馈。</li>
+      <li><code>/</code> <code>1–5</code> <code>Enter</code> <code>Esc</code> <code>H</code> 完全不变。</li>
+      <li><code>Esc</code> 优先级：波形菜单 → 选题面板 → History → 停止运行。</li>
+    </ol></div>
+    <div class="rule"><h4>每列状态</h4><ol>
+      <li><code>colVariants[]</code> 独立保存，互不读写；渲染循环按列取分支。</li>
+      <li>工具带与对比卡片显示的是<b>名字</b>，不是代号；都是被动指示。</li>
+      <li>菜单锚点按被点击列中心计算，指向线随列移动。</li>
+      <li>界面全英文、无中文提示、无分叉线、无节点与轮换动画、推挤式 History——全部保持不变。</li>
+    </ol></div>
+  </div>
+
+  <h2>四、可交互示意</h2>
+  <p class="lede" style="margin-bottom:14px">初始三列即为 Oscilloscope / Mirrored bars / Dot matrix，直接展示独立状态。点第一列波形唤起就近菜单并改成 Radial voiceprint，看另外两列不动；按 <code>V</code> 洗牌，<code>Shift+V</code> 复位；按 <code>H</code> 确认 History 仍不遮 CH 03。波形面板内没有任何文字或编号。</p>
+  <div class="screen" id="b2-screen">
+    <div class="qblock" id="q-open">
+      <div class="qanchor">Question locked</div>
+      <div class="qmeta"><span>Q / <b>014</b></span><span>Source <b>Curated 01</b></span><span>Three voices</span></div>
+      <div class="qtext" id="q-current">If a machine could dream, would its dreams be about us — or about something we cannot imagine?</div>
+      <div class="qhint">/ change question</div>
+    </div>
+    <div class="stage">
+      <div class="cols">
+        <div class="col">
+          <div class="chead"><span class="cid">CH 01 / L</span><span class="nm">Buddhism</span><span class="ms"><i>M</i><i>S</i></span></div>
+          <div class="body">
+            <p class="past">The dreamer and the dream are not two. Ask first who is asking.</p>
+            <p class="act">If a machine dreams, what it sees is only a shadow raised by distinction.</p>
+            <p>Once a self is posited, an object follows; both arise together, and the dream is no longer a dream.</p>
+            <p class="past">Where is the machine when it is not dreaming?</p>
+            <p>Where does the shadow go when the light is withdrawn?</p>
+          </div>
+          <div class="wave"><canvas class="col-wave" width="300" height="72"></canvas></div>
+        </div>
+        <div class="col">
+          <div class="chead"><span class="cid">CH 02 / C</span><span class="nm">Confucianism</span><span class="ms"><i class="on">M</i><i>S</i></span></div>
+          <div class="body">
+            <p class="past">Every question has an asker and a reason for asking.</p>
+            <p>A machine's dream comes from what it was taught. Humans give it language and relations; its dream will not depart from human relations.</p>
+            <p class="past">The concern is not that machines dream, but that we do not know what we teach them.</p>
+            <p>Therefore the task returns to cultivation, not to speculation.</p>
+          </div>
+          <div class="wave"><canvas class="col-wave" width="300" height="72"></canvas></div>
+        </div>
+        <div class="col">
+          <div class="chead"><span class="cid">CH 03 / R</span><span class="nm">Daoism</span><span class="ms"><i>M</i><i>S</i></span></div>
+          <div class="body">
+            <p class="past">Zhuangzi dreamed of a butterfly and did not know which was which.</p>
+            <p>Not knowing, why require the machine to know? To speak of the dream is already to have left it.</p>
+            <p class="past">I will keep to not-knowing.</p>
+            <p>The unnameable is not a failure of language, but its edge.</p>
+          </div>
+          <div class="wave"><canvas class="col-wave" width="300" height="72"></canvas></div>
+        </div>
+      </div>
+      <div class="hist" id="hist-dock">
+        <div class="hist-tab" id="hist-toggle"><span>&#8249;</span> History · 20</div>
+        <div class="hist-body">
+          <h4>History / 20 max <span id="hist-close">× close</span></h4>
+          <div class="hi on" data-q="If a machine could dream, would its dreams be about us — or about something we cannot imagine?"><b>014</b> If a machine could dream…<span>Replay · 00:37 · 3 voices</span></div>
+          <div class="hi" data-q="When you answer a question, do you understand it, or merely predict what understanding sounds like?"><b>013</b> When you answer a question…<span>Replay · 00:41 · 3 voices</span></div>
+          <div class="hi" data-q="Does silence mean absence of thought, or presence of something that cannot be spoken?"><b>012</b> Does silence mean absence…<span>Replay · 00:29 · 3 voices</span></div>
+          <div class="hi" data-q="If two models give the same answer but arrived there through different reasoning, did they think the same thought?"><b>011</b> If two models give the same…<span>Replay · 00:33 · 3 voices</span></div>
+          <div class="hint">Click to replay · clear all</div>
+        </div>
+      </div>
+    </div>
+    <div class="tools">
+      <div class="c">TOL / <b>014</b></div>
+      <div class="c">State <b id="st-state">Idle</b></div>
+      <div class="c">Order <b>01 → 03 → 02</b></div>
+      <div class="c">Elapsed <b id="st-time">00:00</b></div>
+      <div class="c">Wave <b id="wave-ind">SCOPE / BARS / MATRIX</b></div>
+      <div class="c grow">Ch 01 active · ducking −6 dB</div>
+      <button class="stop" id="stop-btn">■ Stop</button>
+    </div>
+
+    <div class="pal-wrap" id="palette">
+      <div class="pal">
+        <h3>Select question <span id="pal-close">× esc</span></h3>
+        <div class="qsec">
+          <div class="sub">Curated prompts · click to ask · 1–5</div>
+          <div id="presets"></div>
+          <div class="sub">Or type your own · enter to ask</div>
+          <textarea id="custom" placeholder="Ask anything…"></textarea>
+          <div class="runhint">Running · stop first to ask again</div>
+        </div>
+        <div class="pf">/ open · esc close · h history · v shuffle · 1–5 ask</div>
+      </div>
+    </div>
+
+    <div class="vismenu" id="vismenu">
+      <div class="vm-head"><span id="vm-label">CH 01 / Waveform · v to shuffle</span><span id="vm-close">× esc</span></div>
+      <div class="vm-grid" id="vm-grid"></div>
+      <div class="vm-foot">Applies to this column only · esc to close</div>
+    </div>
+    <div class="toast" id="toast">Session started</div>
+  </div>
+
+  <h2>五、四种动画（按名字，按列应用）</h2>
+  <div class="wctl">
+    <button class="btn2 on" id="speak-toggle">Speaking · click for silence</button>
+    <button class="btn2" id="shuffle-btn">Shuffle (V) →</button>
+    <button class="btn2" id="reset-btn">Reset (Shift+V)</button>
+    <span class="pick" id="pick-label">CH01 Scope · CH02 Bars · CH03 Dot matrix</span>
+  </div>
+  <div class="wgrid" id="wgrid"></div>
+  <p class="dropped">每张卡片的 <code>CH 01 / 02 / 03</code> 按钮把该动画应用到对应列，高亮表示这一列正在使用它。Chart recorder（原记录纸走带）与 Spectral ridge（原频谱山脊）仍为淘汰项。</p>
+  <div class="note"><b>默认建议：</b> 三列都以 Oscilloscope 起步（<code>Shift+V</code> 一键回到基准）；初始示意用三种不同动画，只为展示独立状态。</div>
+
+  <h2>六、实现清单（增量）</h2>
+  <div class="impl">
+    <ol>
+      <li><code>config.js</code>：<code>waveform.defaultVariant: 'scope'</code> + <code>perColumn: true</code> + 白名单；移除任何用于界面显示的 <code>code</code> 字段，只保留 <code>name</code> / <code>short</code> / 内部 <code>id</code>。</li>
+      <li><code>index.js</code>：维护 <code>colVariants[]</code>，按列实例化 <code>createWaveform</code>；工具带 <code>WAVE</code> 绑定三列名字字符串；V / Shift+V 绑定 <code>shuffleVariants()</code> / <code>resetVariants()</code>。</li>
+      <li><code>ui/waveform-picker.js</code>：<code>open(targetColumnIndex)</code> 接收被点列下标；选项只渲染预览与名字，无代号；<code>setColumnVariant(i, id)</code> 只改一列；不提供「应用到全部」；apply / shuffle / reset / 卡片应用<b>都不触发 toast</b>，仅 <code>updateIndicators()</code> 更新被动指示。</li>
+      <li><code>ui/column.js</code>：<b>删除波形角标 DOM 与样式</b>，波形容器内只有 canvas；<code>cursor:pointer</code> + hover 底色保留；其余 karaoke / M/S / 滚动逻辑不动。</li>
+      <li><code>shuffleVariants()</code>：Fisher–Yates 打乱四种 id 取前三个，互不相同且保证与当前组合不同；不打开菜单。</li>
+      <li><code>audio/waveform.js</code>：四分支 bars / scope / dots / radial 不变，<code>setVariant()</code> 每列实例各自调用；Oscilloscope 仍需 <code>fftSize=1024</code> + <code>getByteTimeDomainData()</code>。</li>
+      <li>文案与文档：工具带、菜单、toast、aria-label、README / CONTEXT / UBIQUITOUS_LANGUAGE 一律用动画名字，不出现任何变体代号；重录 demo。</li>
+    </ol>
+    <p class="foot-note">布局、层级、命题层、全英文文案、推挤式 History、三个互斥浮层、点选即提问、无 Debug overlay 等上一版结论<b>全部保持不变</b>。示意中的波形使用模拟语音包络，接真实 AnalyserNode 后需按 24kHz PCM 重新标定增益与静默阈值；四种动画都保留静默呼吸态与 reduced-motion 静态帧。本页为设计与交互提案，<b>未改动任何运行时代码</b>。</p>
+  </div>
+</div>
+
+<script>
+const presets=[
+ 'If a machine could dream, would its dreams be about us — or about something we cannot imagine?',
+ 'When you answer a question, do you understand it, or merely predict what understanding sounds like?',
+ 'Is consciousness the ability to feel, or simply the ability to reflect on what you feel?',
+ 'If two models give the same answer but arrived there through different reasoning, did they think the same thought?',
+ 'Does silence mean absence of thought, or presence of something that cannot be spoken?'
+];
+const WAVE=[
+ {id:'bars',name:'Mirrored bars',short:'Bars',src:'getByteFrequencyData',d:'24 log-spaced mirrored bars with peak hold. No data-layer change.',pros:['Safest fallback, only color and ruler change','Clear amplitude response'],cons:['Spectrum, not a waveform','Weakest retro character'],effort:'Low'},
+ {id:'scope',name:'Oscilloscope',short:'Scope',src:'getByteTimeDomainData',d:'Continuous time-domain trace with center baseline and fine grid. The only true waveform.',pros:['One-to-one amplitude mapping, most intuitive','1970s instrument language, matches B-2','Silence is a breathing horizontal line'],cons:['Needs fftSize 1024','Fast speech can blur the trace'],effort:'Low–mid'},
+ {id:'dots',name:'Dot matrix',short:'Matrix',src:'getByteFrequencyData',d:'40×7 dot grid lit column by column, LED / vacuum-fluorescent feel.',pros:['Strongest retro-futurist character','Discrete reading, easy on the eyes'],cons:['Quiet speech barely visible','Higher draw cost than a single line'],effort:'Mid'},
+ {id:'radial',name:'Radial voiceprint',short:'Radial',src:'getByteFrequencyData',d:'Spectrum wrapped into a closed ring; center can hold a school glyph.',pros:['Unites identity and waveform','Strong as a static installation'],cons:['Most decorative, least readable','Small detail loss in narrow columns'],effort:'Mid–high'}
+];
+const screen=document.getElementById('b2-screen');
+const palette=document.getElementById('palette');
+const vismenu=document.getElementById('vismenu');
+const hist=document.getElementById('hist-dock');
+const toast=document.getElementById('toast');
+const qCurrent=document.getElementById('q-current');
+const custom=document.getElementById('custom');
+const wgrid=document.getElementById('wgrid');
+let colVariants=['scope','bars','dots'];
+let pickerTarget=0;
+let running=false;
+let sec=0,timer=null,doneTimer=null;
+let speaking=true;
+
+function waveBy(id){return WAVE.find(w=>w.id===id)||WAVE[1];}
+function showToast(msg){
+  toast.textContent=msg;toast.classList.add('show');
+  clearTimeout(showToast.t);showToast.t=setTimeout(()=>toast.classList.remove('show'),1500);
+}
+function fmt(n){return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');}
+function setRunning(v){
+  running=v;
+  screen.classList.toggle('running',v);
+  document.getElementById('st-state').textContent=v?'Thinking':'Idle';
+  clearInterval(timer);clearTimeout(doneTimer);
+  if(v){
+    sec=0;document.getElementById('st-time').textContent='00:00';
+    timer=setInterval(()=>{sec++;document.getElementById('st-time').textContent=fmt(sec);},1000);
+    setTimeout(()=>{if(running)document.getElementById('st-state').textContent='Speaking';},1600);
+    doneTimer=setTimeout(()=>{
+      if(!running)return;
+      setRunning(false);
+      document.getElementById('st-state').textContent='Done';
+      showToast('Session saved');
+      setTimeout(()=>{document.getElementById('st-state').textContent='Idle';},1200);
+    },9000);
+  }
+}
+function ask(q){
+  if(!q)return;
+  if(running){showToast('Running · stop first');return;}
+  qCurrent.textContent=q;
+  closeAll();
+  setRunning(true);
+  showToast('Session started');
+}
+function stop(){
+  if(!running)return;
+  setRunning(false);
+  document.getElementById('st-state').textContent='Idle';
+  showToast('Stopped');
+}
+function closePalette(){palette.classList.remove('open');}
+function closeVis(){vismenu.classList.remove('open');}
+function closeHist(){hist.classList.remove('open');}
+function closeAll(){closePalette();closeVis();closeHist();}
+function openPalette(){closeVis();closeHist();palette.classList.add('open');if(!running)custom.focus();}
+function toggleHist(){
+  if(hist.classList.contains('open'))closeHist();
+  else{closePalette();closeVis();hist.classList.add('open');}
+}
+
+const presetHost=document.getElementById('presets');
+presets.forEach((p,i)=>{
+  const b=document.createElement('button');
+  b.className='preset'+(i===0?' on':'');
+  b.innerHTML='<i>'+(i+1)+'</i>'+p;
+  b.addEventListener('click',()=>{
+    presetHost.querySelectorAll('.preset').forEach((x,j)=>x.classList.toggle('on',j===i));
+    custom.value='';ask(p);
+  });
+  presetHost.appendChild(b);
+});
+document.getElementById('q-open').addEventListener('click',openPalette);
+document.getElementById('pal-close').addEventListener('click',closePalette);
+palette.addEventListener('click',e=>{if(e.target===palette)closePalette();});
+document.getElementById('stop-btn').addEventListener('click',stop);
+document.getElementById('hist-toggle').addEventListener('click',toggleHist);
+document.getElementById('hist-close').addEventListener('click',closeHist);
+document.querySelectorAll('.hi').forEach(item=>item.addEventListener('click',()=>{
+  document.querySelectorAll('.hi').forEach(x=>x.classList.remove('on'));
+  item.classList.add('on');
+  qCurrent.textContent=item.dataset.q;
+  closeHist();showToast('Replaying session');
+}));
+screen.querySelectorAll('.ms i').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();btn.classList.toggle('on');}));
+custom.addEventListener('input',()=>{if(custom.value.trim())presetHost.querySelectorAll('.preset').forEach(b=>b.classList.remove('on'));});
+custom.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();ask(custom.value.trim());}});
+
+const waveEls=[...screen.querySelectorAll('.wave')];
+const vmGrid=document.getElementById('vm-grid');
+const vmLabel=document.getElementById('vm-label');
+function updateIndicators(){
+  document.getElementById('wave-ind').textContent=colVariants.map(v=>waveBy(v).short.toUpperCase()).join(' / ');
+  document.getElementById('pick-label').textContent=colVariants.map((v,i)=>'CH0'+(i+1)+' '+waveBy(v).short).join(' · ');
+  vmGrid.querySelectorAll('.vm-opt').forEach(o=>o.classList.toggle('on',o.dataset.id===colVariants[pickerTarget]));
+  wgrid.querySelectorAll('.gbtn').forEach(b=>b.classList.toggle('on',colVariants[Number(b.dataset.col)]===b.closest('.wcard').dataset.id));
+}
+function setColumnVariant(i,id){
+  colVariants[i]=id;
+  updateIndicators();
+}
+function openVis(i){
+  pickerTarget=i;
+  closePalette();closeHist();
+  const r=waveEls[i].getBoundingClientRect();
+  const s=screen.getBoundingClientRect();
+  const menuW=vismenu.offsetWidth||Math.min(520,s.width*.86);
+  const colCenter=r.left-s.left+r.width/2;
+  const left=Math.max(12,Math.min(colCenter-menuW/2,s.width-menuW-12));
+  vismenu.style.left=left+'px';
+  vismenu.style.transform='none';
+  vismenu.style.setProperty('--anchor-x',(colCenter-left)+'px');
+  vmLabel.textContent='CH 0'+(i+1)+' / waveform · v to shuffle';
+  vismenu.classList.add('open');
+  updateIndicators();
+}
+waveEls.forEach((w,i)=>w.addEventListener('click',()=>openVis(i)));
+document.getElementById('vm-close').addEventListener('click',closeVis);
+screen.addEventListener('click',e=>{
+  if(vismenu.classList.contains('open')&&!e.target.closest('.wave')&&!e.target.closest('#vismenu'))closeVis();
+});
+WAVE.forEach(w=>{
+  const b=document.createElement('button');
+  b.className='vm-opt';b.dataset.id=w.id;
+  b.innerHTML='<canvas width="120" height="34"></canvas>'+w.name;
+  b.addEventListener('click',()=>{
+    setColumnVariant(pickerTarget,w.id);
+    closeVis();
+  });
+  vmGrid.appendChild(b);
+});
+function shuffleVariants(){
+  const ids=WAVE.map(w=>w.id);
+  let next,tries=0;
+  do{
+    const pool=ids.slice();
+    for(let j=pool.length-1;j>0;j--){
+      const k=Math.floor(Math.random()*(j+1));
+      const tmp=pool[j];pool[j]=pool[k];pool[k]=tmp;
+    }
+    next=pool.slice(0,3);
+    tries++;
+  }while(tries<30&&next.every((v,i)=>v===colVariants[i]));
+  colVariants=next;
+  updateIndicators();
+}
+function resetVariants(){
+  colVariants=['scope','scope','scope'];
+  updateIndicators();
+}
+document.getElementById('shuffle-btn').addEventListener('click',shuffleVariants);
+document.getElementById('reset-btn').addEventListener('click',resetVariants);
+
+document.addEventListener('keydown',e=>{
+  const typing=/INPUT|TEXTAREA/.test(document.activeElement.tagName);
+  if(e.key==='Escape'){
+    if(vismenu.classList.contains('open'))closeVis();
+    else if(palette.classList.contains('open'))closePalette();
+    else if(hist.classList.contains('open'))closeHist();
+    else stop();
+    return;
+  }
+  if(e.key==='/'&&!typing){e.preventDefault();openPalette();return;}
+  if((e.key==='h'||e.key==='H')&&!typing){toggleHist();return;}
+  if((e.key==='v'||e.key==='V')&&!typing){e.shiftKey?resetVariants():shuffleVariants();return;}
+  if(palette.classList.contains('open')&&!typing&&/^[1-5]$/.test(e.key)){
+    const i=Number(e.key)-1;
+    presetHost.querySelectorAll('.preset').forEach((b,j)=>b.classList.toggle('on',j===i));
+    ask(presets[i]);
+  }
+});
+
+WAVE.forEach(w=>{
+  const card=document.createElement('div');
+  card.className='wcard';card.dataset.id=w.id;
+  card.innerHTML='<div class="wh"><b>'+w.name+'</b><span class="src">'+w.src+'</span></div>'+
+    '<canvas width="460" height="72"></canvas>'+
+    '<div class="d">'+w.d+'</div><ul>'+
+    w.pros.map(x=>'<li>'+x+'</li>').join('')+
+    w.cons.map(x=>'<li class="bad">'+x+'</li>').join('')+'</ul>'+
+    '<div class="wf"><span class="tag">'+w.effort+'</span>'+
+    [0,1,2].map(j=>'<button class="gbtn'+(j===0?' first':'')+'" data-col="'+j+'">CH 0'+(j+1)+'</button>').join('')+'</div>';
+  card.querySelectorAll('.gbtn').forEach(b=>b.addEventListener('click',()=>{
+    setColumnVariant(Number(b.dataset.col),w.id);
+  }));
+  wgrid.appendChild(card);
+});
+updateIndicators();
+
+const speakBtn=document.getElementById('speak-toggle');
+speakBtn.addEventListener('click',()=>{
+  speaking=!speaking;
+  speakBtn.textContent=speaking?'Speaking · click for silence':'Silent · click for speaking';
+  speakBtn.classList.toggle('on',speaking);
+});
+
+const colCanvases=[...screen.querySelectorAll('.col-wave')];
+const galCanvases=[...wgrid.querySelectorAll('canvas')];
+const vmCanvases=[...vismenu.querySelectorAll('canvas')];
+function signal(t){
+  const env=speaking?Math.max(.08,.55+.35*Math.sin(t*2.1)+.12*Math.sin(t*7.7)):0.045;
+  const f=new Float32Array(48);
+  for(let i=0;i<48;i++){
+    const base=Math.exp(-i/16)*.85+.15;
+    f[i]=Math.max(0,Math.min(1,base*env*(.58+.42*Math.sin(t*3.1+i*.41))+.04));
+  }
+  const td=new Float32Array(180);
+  for(let i=0;i<180;i++){
+    const x=i/180*Math.PI*2;
+    td[i]=(Math.sin(x*7+t*9)*.52+Math.sin(x*17-t*5)*.27+Math.sin(x*31+t*13)*.13)*env;
+  }
+  return {f,td,env};
+}
+function draw(id,ctx,w,h,S){
+  ctx.clearRect(0,0,w,h);
+  const fg='#b6ff1f',ac='#d6ff6b',dim='rgba(182,255,31,.28)';
+  ctx.lineWidth=1;ctx.strokeStyle=dim;
+  ctx.beginPath();ctx.moveTo(0,h/2);ctx.lineTo(w,h/2);ctx.stroke();
+  if(id==='bars'){
+    const n=24,bw=w/(n*2);
+    for(let i=0;i<n;i++){
+      const bh=Math.max(1,S.f[Math.round(i/n*47)]*h*.86);
+      ctx.fillStyle=fg;ctx.globalAlpha=.55+S.f[i%48]*.45;
+      ctx.fillRect(i*bw+1,h-bh,bw-2,bh);
+      ctx.fillRect(w-(i+1)*bw+1,h-bh,bw-2,bh);
+    }
+    ctx.globalAlpha=1;
+  }else if(id==='scope'){
+    ctx.strokeStyle=dim;ctx.lineWidth=.5;
+    for(let y=12;y<h;y+=12){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+    for(let x=0;x<w;x+=32){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}
+    ctx.strokeStyle=fg;ctx.lineWidth=1.3;ctx.beginPath();
+    for(let i=0;i<180;i++){
+      const x=i/179*w,y=h/2-S.td[i]*h*.42;
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }else if(id==='dots'){
+    const cols=40,rows=7,gx=w/cols,gy=h/rows;
+    for(let c=0;c<cols;c++){
+      const lvl=Math.round(S.f[Math.round(c/cols*47)]*rows);
+      for(let r=0;r<rows;r++){
+        const lit=r>=rows-lvl;
+        ctx.fillStyle=lit?ac:dim;ctx.globalAlpha=lit?.9:.35;
+        ctx.fillRect(c*gx+gx*.28,r*gy+gy*.22,gx*.44,gy*.5);
+      }
+    }
+    ctx.globalAlpha=1;
+  }else if(id==='radial'){
+    const cx=w/2,cy=h/2,base=Math.min(w,h)*.24;
+    ctx.strokeStyle=dim;ctx.lineWidth=.6;
+    ctx.beginPath();ctx.arc(cx,cy,base,0,Math.PI*2);ctx.stroke();
+    ctx.strokeStyle=fg;ctx.lineWidth=1.2;ctx.beginPath();
+    for(let i=0;i<=96;i++){
+      const a=i/96*Math.PI*2,r=base+S.f[i%48]*Math.min(w,h)*.24;
+      const x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r;
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.closePath();ctx.stroke();
+  }
+}
+const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let start=performance.now();
+function loop(now){
+  const t=(now-start)/1000,S=signal(t);
+  colCanvases.forEach((c,i)=>draw(colVariants[i],c.getContext('2d'),c.width,c.height,signal(t+i*.35)));
+  galCanvases.forEach((c,i)=>draw(WAVE[i].id,c.getContext('2d'),c.width,c.height,S));
+  vmCanvases.forEach((c,i)=>draw(WAVE[i].id,c.getContext('2d'),c.width,c.height,S));
+  if(!reduce)requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

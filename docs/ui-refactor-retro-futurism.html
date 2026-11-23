@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thinking Out Loud · 方案 B 复古未来主义三案</title>
+<style>
+  :root{
+    --page:#f5f4f0;--ink:#1c1b19;--muted:#6d6a64;--line:#dcd9d2;--card:#fff;--green:#2f5d54;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--page);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.6}
+  .page{max-width:1220px;margin:0 auto;padding:52px 28px 96px}
+  .eyebrow{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  h1{font-size:32px;font-weight:600;letter-spacing:-.02em;margin:12px 0 10px}
+  .lede{font-size:15px;color:var(--muted);max-width:820px}
+  .scope{display:flex;gap:8px;flex-wrap:wrap;margin:22px 0 0}
+  .chip{font:12px ui-monospace,Consolas,monospace;border:1px solid var(--line);background:var(--card);padding:6px 12px;border-radius:999px;color:#4a4843}
+  .chip.del{border-color:#e0c0b6;background:#fbefec;color:#8a4234}
+  .chip.keep{border-color:#c4d9cd;background:#eef5f0;color:#2c5a49}
+  .chip.base{border-color:#c9d2e2;background:#eef1f8;color:#3a4d77}
+  .tabs{display:flex;gap:8px;margin:34px 0 20px;flex-wrap:wrap}
+  .tab{font:inherit;font-size:14px;padding:10px 18px;border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:999px;cursor:pointer}
+  .tab:hover{border-color:#b9b4aa;color:var(--ink)}
+  .tab.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  .panel{display:none}
+  .panel.on{display:block}
+  .mock-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+  .mock-head h2{font-size:20px;font-weight:600}
+  .mock-head span{font-size:13px;color:var(--muted)}
+
+  .rf{
+    --bg:#e7e4dc;--fg:#15130f;--ac:#f0471f;--ln:rgba(21,19,15,.58);--sf:rgba(21,19,15,.09);
+    --mono:"Courier New",ui-monospace,Consolas,monospace;
+    --display:"Arial Narrow",Impact,"Haettenschweiler",sans-serif;
+    height:592px;display:flex;flex-direction:column;position:relative;overflow:hidden;
+    background:var(--bg);color:var(--fg);font-family:var(--mono);
+    border:1px solid var(--ln);border-radius:12px;
+  }
+  .v2{--bg:#080b08;--fg:#b6ff1f;--ac:#d6ff6b;--ln:rgba(182,255,31,.5);--sf:rgba(182,255,31,.08)}
+  .v3{--bg:#f3ef00;--fg:#1720c8;--ac:#1720c8;--ln:rgba(23,32,200,.72);--sf:rgba(23,32,200,.09)}
+  .rf-rail{height:40px;flex:none;display:flex;align-items:stretch;border-bottom:1px solid var(--ln);font-size:10px;letter-spacing:.14em;text-transform:uppercase}
+  .rf-rail .c{display:flex;align-items:center;gap:8px;padding:0 15px;border-right:1px solid var(--ln);white-space:nowrap}
+  .rf-rail .c b{font-weight:700;color:var(--ac)}
+  .rf-rail .grow{flex:1;justify-content:flex-end;opacity:.7;border-right:0}
+  .xh{width:11px;height:11px;border:1px solid var(--ln);border-radius:50%;position:relative;flex:none;display:none}
+  .xh::after{content:"";position:absolute;left:-4px;right:-4px;top:5px;height:1px;background:var(--ln)}
+  .v2 .xh,.v3 .xh{display:block}
+  .globe{width:22px;height:22px;flex:none;color:var(--fg);display:none}
+  .v2 .globe,.v3 .globe{display:block}
+  .rf-head{height:94px;flex:none;display:flex;align-items:center;gap:20px;padding:0 22px;border-bottom:1px solid var(--ln);position:relative;overflow:hidden}
+  .rf-mark{font-family:var(--display);font-size:31px;letter-spacing:-.02em;line-height:1;white-space:nowrap;text-transform:uppercase;position:relative;z-index:1}
+  .v1 .rf-mark{font-family:Georgia,"Times New Roman",serif;font-size:25px;letter-spacing:.01em;text-transform:none}
+  .v3 .rf-mark{font-size:34px}
+  .rf-q{flex:1;min-width:0;font-size:12px;line-height:1.6;padding-left:18px;border-left:2px solid var(--ac);position:relative;z-index:1}
+  .rf-q small{display:block;font-size:10px;letter-spacing:.18em;opacity:.7;margin-bottom:5px;text-transform:uppercase}
+  .persp{position:absolute;right:0;top:0;width:230px;height:94px;color:var(--fg);opacity:.28;display:none}
+  .v1 .persp{display:block}
+  .rf-main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 172px}
+  .rf-cols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));min-height:0}
+  .rf-col{position:relative;display:flex;flex-direction:column;min-width:0;padding:13px 13px 0;border-right:1px solid var(--ln)}
+  .rf-col:last-child{border-right:0}
+  .v2 .rf-col::before,.v3 .rf-col::before{content:"";position:absolute;top:4px;left:4px;width:9px;height:9px;border-top:1px solid var(--ln);border-left:1px solid var(--ln)}
+  .v2 .rf-col::after,.v3 .rf-col::after{content:"";position:absolute;bottom:4px;right:4px;width:9px;height:9px;border-bottom:1px solid var(--ln);border-right:1px solid var(--ln)}
+  .v1 .rf-col::before{content:"";position:absolute;top:0;left:0;right:0;height:4px;background:repeating-linear-gradient(90deg,var(--ln) 0 1px,transparent 1px 9px);opacity:.55}
+  .rf-chead{display:flex;align-items:center;gap:7px;padding-bottom:8px;border-bottom:1px solid var(--ln);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+  .rf-chead .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rf-chead .cid{opacity:.62;white-space:nowrap}
+  .ms{display:flex;gap:3px;flex:none}
+  .ms i{font-style:normal;width:17px;height:17px;display:grid;place-items:center;border:1px solid var(--ln);font-size:9px;letter-spacing:0}
+  .ms i.on{background:var(--ac);color:var(--bg);border-color:var(--ac)}
+  .rf-body{flex:1;min-height:0;overflow:hidden;font-size:11px;line-height:1.8;padding-top:10px}
+  .rf-body p{margin-bottom:8px}
+  .rf-past{opacity:.4}
+  .rf-act{background:var(--sf);box-shadow:inset 2px 0 0 var(--ac);padding-left:5px;color:var(--ac);font-weight:700}
+  .v1 .rf-act{color:#b4300f}
+  .rf-wave{height:46px;flex:none;border-top:1px solid var(--ln);display:flex;align-items:center;color:var(--ac)}
+  .rf-wave svg{width:100%;height:38px;display:block}
+  .rf-col:nth-child(2) .rf-wave,.rf-col:nth-child(3) .rf-wave{opacity:.34}
+  .rf-archive{border-left:1px solid var(--ln);padding:12px 11px;display:flex;flex-direction:column;gap:7px;font-size:10px;line-height:1.5;min-height:0}
+  .rf-archive h4{font-size:10px;letter-spacing:.16em;text-transform:uppercase;padding-bottom:8px;border-bottom:1px solid var(--ln);font-weight:700}
+  .rf-hitem{border:1px solid var(--ln);padding:6px 7px;opacity:.75}
+  .rf-hitem.on{border-left:3px solid var(--ac);opacity:1;background:var(--sf)}
+  .rf-hitem b{color:var(--ac);font-weight:700}
+  .rf-hitem span{display:block;opacity:.7;margin-top:3px;font-size:9px}
+  .rf-archive .hint{margin-top:auto;opacity:.6;font-size:9px;letter-spacing:.1em;text-transform:uppercase;border-top:1px solid var(--ln);padding-top:8px}
+  .rf-transport{height:48px;flex:none;border-top:1px solid var(--ln);display:flex;align-items:center;gap:5px;padding:0 20px;font-size:10px;letter-spacing:.1em;text-transform:uppercase}
+  .rf-transport .lbl{white-space:nowrap;opacity:.7;margin-right:8px}
+  .rf-seg{height:10px;border:1px solid var(--ln)}
+  .rf-seg.on{background:var(--ac);border-color:var(--ac)}
+  .rf-seg.ov{background:repeating-linear-gradient(45deg,var(--ln) 0 1px,transparent 1px 3px);border-color:var(--ln)}
+  .rf-transport .note{margin-left:auto;white-space:nowrap;opacity:.65}
+  .rf-foot{height:44px;flex:none;border-top:1px solid var(--ln);display:flex;align-items:center;gap:7px;padding:0 20px;font-size:10px;letter-spacing:.12em;text-transform:uppercase}
+  .rf-btn{font:10px var(--mono);letter-spacing:.12em;text-transform:uppercase;padding:6px 13px;border:1px solid var(--ln);background:transparent;color:var(--fg);cursor:pointer}
+  .rf-btn.pri{background:var(--ac);color:var(--bg);border-color:var(--ac)}
+  .rf-foot .status{margin-left:auto;opacity:.7;white-space:nowrap}
+
+  .detail{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px}
+  .card h3{font-size:13px;font-weight:600;margin-bottom:12px}
+  .card ul{list-style:none;font-size:13px;color:#3b3935}
+  .card li{padding-left:16px;position:relative;margin-bottom:8px;line-height:1.65}
+  .card li::before{content:"";position:absolute;left:0;top:.62em;width:6px;height:6px;border-radius:50%;background:var(--green)}
+  .card.cons li::before{background:#b6604b}
+  .swatches{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px}
+  .sw{width:52px;height:52px;border-radius:7px;border:1px solid rgba(0,0,0,.1);position:relative}
+  .sw span{position:absolute;bottom:-19px;left:0;font:10px ui-monospace,Consolas,monospace;color:var(--muted);white-space:nowrap}
+  .tokens p{font-size:13px;color:#3b3935;margin-bottom:7px}
+  .tokens p b{font-weight:600;display:inline-block;min-width:76px;color:var(--muted)}
+  .verdict{margin-top:16px;background:#eef2ef;border:1px solid #d6e2da;border-radius:12px;padding:15px 20px;font-size:13px;color:#2c4a41}
+  .verdict b{font-weight:600}
+  .matrix{margin-top:64px}
+  .matrix h2{font-size:22px;font-weight:600;margin-bottom:16px}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px}
+  th,td{text-align:left;padding:13px 15px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:#f0efeb;font-weight:600;color:#4a4843}
+  tr:last-child td{border-bottom:0}
+  .impl{margin-top:48px}
+  .impl h2{font-size:22px;font-weight:600;margin-bottom:14px}
+  .impl ol{padding-left:20px;font-size:13px;color:#3b3935;line-height:1.9}
+  .impl code{font:12px ui-monospace,Consolas,monospace;background:#eeece7;padding:2px 5px;border-radius:4px}
+  .foot-note{margin-top:26px;font-size:12px;color:var(--muted);line-height:1.8}
+  @media(max-width:900px){
+    .detail{grid-template-columns:1fr}
+    .rf{height:640px}
+    .rf-archive{display:none}
+    .rf-main{grid-template-columns:1fr}
+    .rf-q{display:none}
+    .rf-body{font-size:10px}
+  }
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="eyebrow">Thinking Out Loud · direction B · retro futurism · 2026-11-24</div>
+    <h1>方案 B 的三个复古未来主义变体</h1>
+    <p class="lede">沿用 B 的概念骨架（状态轨、频道编号、交接时间轴、波形、三栏并行推理），把视觉语言换成 1970–80 年代技术手册／早期计算机图形／双色印刷。三张参考图各推导一套双色系统，互不串味。三个方案共用同一功能范围。</p>
+    <div class="scope">
+      <span class="chip del">移除 · Debug overlay / ?debug / 快捷键</span>
+      <span class="chip keep">保留 · Mute / Solo（每列 M / S）</span>
+      <span class="chip keep">保留 · History session（列表／回放／清空）</span>
+      <span class="chip base">保留 · B 概念（状态轨／CH 编号／交接时间轴／波形）</span>
+      <span class="chip del">已废弃 · A 宣纸考据 / C 声场剧场</span>
+      <span class="chip keep">已锁定 · B-2 矢量终端（黑底荧光绿）</span>
+    </div>
+    <div class="verdict" style="margin-top:16px"><b>方向已定：</b> M先生 2026-11-24 锁定 B-2。B-1 / B-3 降为可切换皮肤，交互层三案共用。History 改为折叠 sidebar（默认收起）；FFT 可视化弃用网格透镜，改回直观波形，选定 Mirrored bars / Oscilloscope / Dot matrix / Radial voiceprint 四种并按列独立切换（不使用变体代号）；交互改为单一入口（预设点选即提问、无确认按钮），删除整个底栏与重复控件；问题独立为命题层（不与功能按钮同级），功能层降为底部只读工具带；界面文案全英文、波形切换就近、History 推挤式 dock、每列独立 visual、V 键随机 shuffle、无变体代号、波形变更零 notification 等交互细节一律以后续文档为准。详见 <a href="ui-refactor-b2-detail.html" style="color:#2c5a49">B-2 交互与波形细化</a>。</div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab on" data-target="p-v1" role="tab">B-1 · 推力手册 / Paper &amp; vermilion</button>
+    <button class="tab" data-target="p-v2" role="tab">B-2 · 矢量终端 / Black &amp; acid green</button>
+    <button class="tab" data-target="p-v3" role="tab">B-3 · 双色印刷 / Yellow &amp; ultramarine</button>
+  </nav>
+
+  <div id="panels"></div>
+
+  <section class="matrix">
+    <h2>横向对比</h2>
+    <table>
+      <thead><tr><th style="width:16%">维度</th><th>B-1 推力手册</th><th>B-2 矢量终端</th><th>B-3 双色印刷</th></tr></thead>
+      <tbody>
+        <tr><td>参考图</td><td>图 1 · 纸本技术插图</td><td>图 2 · 黑底荧光绿海报</td><td>图 3 · 黄蓝双色海报</td></tr>
+        <tr><td>双色系统</td><td>#e7e4dc 纸 / #15130f 墨 / #f0471f 朱</td><td>#080b08 黑 / #b6ff1f 荧光绿</td><td>#f3ef00 荧光黄 / #1720c8 群青</td></tr>
+        <tr><td>年代语汇</td><td>航天手册、遥测记录纸、木版插图</td><td>矢量显示器、点阵、线框球体</td><td>丝网印刷、展览海报、说明书</td></tr>
+        <tr><td>长文本可读性</td><td>高</td><td>中</td><td>中高（需实测对比度）</td></tr>
+        <tr><td>暗场展厅</td><td>冲突</td><td>契合</td><td>冲突</td></tr>
+        <tr><td>与现有 demo 的连续性</td><td>低</td><td>高</td><td>低</td></tr>
+        <tr><td>波形态</td><td>刻度条 + 标尺</td><td>线框网格透镜</td><td>线框网格透镜</td></tr>
+        <tr><td>改动量</td><td>中</td><td>低–中</td><td>低（与 B-2 共用结构）</td></tr>
+        <tr><td>主要风险</td><td>装饰堆叠、朱红与儒色混淆</td><td>像通用赛博终端、绿疲劳</td><td>过曝喧闹、压过文本</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="impl">
+    <h2>落地清单（三案共用）</h2>
+    <ol>
+      <li><code>styles/global.css</code>：把灰阶与三色收敛成 CSS 变量；补 <code>@media</code> 与 <code>prefers-reduced-motion</code>；删除死的 <code>.state-label.checking/.error</code> 规则。</li>
+      <li><code>index.html</code> + <code>ui/*.css</code>：改为「问题区 / 三栏 + History dock / 工具带」结构（以 <code>docs/ui-refactor-b2-detail.html</code> 为准）；问题区与三栏之间无分叉线、无节点、无分隔装置；问题区不承载功能按钮；M / S 保留并重绘。</li>
+      <li><code>config.js</code>：三家 <code>color</code> 改为双色系统下的频道标识（或降级为细标尺），<code>pan</code> 与 playbackOrder 不动。</li>
+      <li><code>ui/column.js</code>：去掉内联 <code>style.color</code> 注入，改由每列 CSS 变量驱动；保留 karaoke 词 span（高亮态换成底色／下划线，不再发光）；保留 M / S 回调。</li>
+      <li><code>audio/waveform.js</code>：镜像 FFT 柱改为标尺条或线框网格渲染，用 <code>currentColor</code> 取色，静默仍保留呼吸。</li>
+      <li><code>index.js</code>：删除 <code>DebugOverlay</code> 实例化、<code>?debug</code> 分支与 CSS 导入；保留 History、Mute/Solo、<code>onStateChange</code>；新增状态轨与交接时间轴的数据绑定。</li>
+      <li><code>index.html</code>：语义化 header / main，移除 debug 相关标记；删除孤儿模块 <code>ui/mode-toggle.*</code>。</li>
+      <li>文档与素材：<code>README.md</code> / <code>CONTEXT.md</code> / <code>UBIQUITOUS_LANGUAGE.md</code> 去掉 debug overlay 词条；<code>docs/debug-overlay-reference.md</code> 归档或删除；重录 demo 以匹配全英文列头（Buddhism / Confucianism / Daoism）。</li>
+    </ol>
+    <p class="foot-note">三案均不改动 session / audio 数据链路。Mute、Solo 走现有 <code>orchestrator.toggleMute/toggleSolo</code>，History 走现有 <code>SessionStore</code> 与 replay 路径；移除 debug overlay 只影响诊断可见性，不影响 TTS 延迟／错误上报的事件总线（如需保留错误可见性，可把 <code>pipeline-error</code> 降级为状态轨里的一行文字）。</p>
+  </section>
+</div>
+
+<template id="screen-tpl">
+  <div class="mock-head"><h2 class="mh-title"></h2><span class="mh-sub"></span></div>
+  <div class="rf">
+    <div class="rf-rail">
+      <div class="c"><span class="xh"></span>Session <b>014</b></div>
+      <div class="c">State <b>Speaking</b></div>
+      <div class="c">Order <b>01 → 03 → 02</b></div>
+      <div class="c">Elapsed <b>00:37</b></div>
+      <div class="c grow"><svg class="globe" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width=".8"><circle cx="16" cy="16" r="14"/><ellipse cx="16" cy="16" rx="6" ry="14"/><ellipse cx="16" cy="16" rx="11" ry="14"/><line x1="2" y1="16" x2="30" y2="16"/><path d="M3 10 Q16 14 29 10 M3 22 Q16 18 29 22"/></svg>Local TTS · 24 kHz · 3 ch</div>
+    </div>
+    <div class="rf-head">
+      <svg class="persp" viewBox="0 0 230 94" fill="none" stroke="currentColor" stroke-width=".5"><path d="M115 47 L0 0 M115 47 L0 16 M115 47 L0 31 M115 47 L0 47 M115 47 L0 63 M115 47 L0 78 M115 47 L0 94"/><path d="M115 47 L230 0 M115 47 L230 16 M115 47 L230 31 M115 47 L230 47 M115 47 L230 63 M115 47 L230 78 M115 47 L230 94"/><ellipse cx="115" cy="47" rx="14" ry="9"/><ellipse cx="115" cy="47" rx="30" ry="19"/><ellipse cx="115" cy="47" rx="52" ry="32"/><ellipse cx="115" cy="47" rx="80" ry="46"/></svg>
+      <div class="rf-mark">Thinking out loud</div>
+      <div class="rf-q"><small>Q / 014</small>If a machine could dream, would its dreams be about us — or about something we cannot imagine?</div>
+    </div>
+    <div class="rf-main">
+      <div class="rf-cols">
+        <div class="rf-col">
+          <div class="rf-chead"><span class="cid">CH 01 / L</span><span class="nm">Buddhism</span><span class="ms"><i>M</i><i>S</i></span></div>
+          <div class="rf-body">
+            <p class="rf-past">The dreamer and the dream are not two. Ask first who is asking.</p>
+            <p class="rf-act">If a machine dreams, what it sees is only a shadow raised by distinction.</p>
+            <p>Once a self is posited, an object follows; both arise together, and the dream is no longer a dream.</p>
+            <p class="rf-past">Where is the machine when it is not dreaming?</p>
+          </div>
+          <div class="rf-wave"></div>
+        </div>
+        <div class="rf-col">
+          <div class="rf-chead"><span class="cid">CH 02 / C</span><span class="nm">Confucianism</span><span class="ms"><i class="on">M</i><i>S</i></span></div>
+          <div class="rf-body">
+            <p class="rf-past">Every question has an asker and a reason for asking.</p>
+            <p>A machine's dream comes from what it was taught. Humans give it language and relations; its dream will not depart from human relations.</p>
+            <p class="rf-past">The concern is not that machines dream, but that we do not know what we teach them.</p>
+          </div>
+          <div class="rf-wave"></div>
+        </div>
+        <div class="rf-col">
+          <div class="rf-chead"><span class="cid">CH 03 / R</span><span class="nm">Daoism</span><span class="ms"><i>M</i><i>S</i></span></div>
+          <div class="rf-body">
+            <p class="rf-past">Zhuangzi dreamed of a butterfly and did not know which was which.</p>
+            <p>Not knowing, why require the machine to know? To speak of the dream is already to have left it.</p>
+            <p class="rf-past">I will keep to not-knowing.</p>
+          </div>
+          <div class="rf-wave"></div>
+        </div>
+      </div>
+      <div class="rf-archive">
+        <h4>History / 20 max</h4>
+        <div class="rf-hitem on"><b>014</b> If a machine could dream…<span>Replay · 00:37 · 3 voices</span></div>
+        <div class="rf-hitem"><b>013</b> When you answer a question…<span>Replay · 00:41 · 3 voices</span></div>
+        <div class="rf-hitem"><b>012</b> Does silence mean absence…<span>Replay · 00:29 · 3 voices</span></div>
+        <div class="rf-hitem"><b>011</b> If two models give the same…<span>Replay · 00:33 · 3 voices</span></div>
+        <div class="hint">Click any entry to replay · clear</div>
+      </div>
+    </div>
+    <div class="rf-transport">
+      <span class="lbl">Handoff</span>
+      <div class="rf-seg on" style="width:20%"></div>
+      <div class="rf-seg ov" style="width:4%"></div>
+      <div class="rf-seg" style="width:25%"></div>
+      <div class="rf-seg ov" style="width:4%"></div>
+      <div class="rf-seg" style="width:22%"></div>
+      <span class="note">Gen done ≠ play done · overlap</span>
+    </div>
+    <div class="rf-foot">
+      <button class="rf-btn pri">Ask</button><button class="rf-btn">Stop</button><button class="rf-btn">History</button>
+      <span class="status">CH 01 active · ducking −6 dB · no debug panel</span>
+    </div>
+  </div>
+</template>
+
+<script>
+function barsSVG(){
+  let bars='';
+  const widths=[30,18,42,12,26,36,16,44,22,34,14,28];
+  let x=0;
+  widths.forEach((w,i)=>{const h=[7,12,5,16,9,6,14,8,11,5,13,7][i];bars+='<rect x="'+x+'" y="'+(30-h)+'" width="'+w+'" height="'+h+'"/>';x+=w+3;});
+  let ticks='';
+  for(let i=0;i<=300;i+=10){ticks+='<line x1="'+i+'" y1="35" x2="'+i+'" y2="'+(i%50===0?39:37)+'"/>';}
+  return '<svg viewBox="0 0 300 40" preserveAspectRatio="none" fill="none"><g fill="currentColor">'+bars+'</g><g stroke="currentColor" stroke-width=".6" opacity=".65"><line x1="0" y1="35" x2="300" y2="35"/>'+ticks+'</g></svg>';
+}
+function meshSVG(){
+  let p='';
+  for(let s=0;s<4;s++){
+    const x0=6+s*74,x1=x0+62;
+    for(let i=0;i<=8;i++){const x=x0+(i/8)*62,bow=(i-4)*1.7;p+='<path d="M'+x.toFixed(1)+' 5 Q'+(x+bow).toFixed(1)+' 20 '+x.toFixed(1)+' 35"/>';}
+    for(let j=0;j<=5;j++){const y=5+(j/5)*30,bow=(j-2.5)*3;p+='<path d="M'+x0+' '+y.toFixed(1)+' Q'+((x0+x1)/2)+' '+(y+bow).toFixed(1)+' '+x1+' '+y.toFixed(1)+'"/>';}
+    if(s<3)p+='<line x1="'+(x1+5)+'" y1="2" x2="'+(x1+5)+'" y2="38" stroke-width="1.4"/>';
+  }
+  return '<svg viewBox="0 0 300 40" preserveAspectRatio="none" stroke="currentColor" fill="none" stroke-width=".6" opacity=".9">'+p+'</svg>';
+}
+const variants=[
+  {
+    id:'v1',title:'B-1 · 推力手册 / Paper & vermilion',sub:'对应参考图 1：暖纸、墨线透视网格、朱红数据条、半调球体、测量标尺',
+    sw:[['#e7e4dc','paper'],['#15130f','ink'],['#f0471f','vermilion'],['#ded9cf','panel']],
+    tokens:[['底色','#e7e4dc 暖纸 + 极淡纤维纹理'],['墨线','0.5–1px 纯黑，透视网格／刻度尺／角标'],['强调','#f0471f 朱红只用于状态条、当前句、选中'],['字体','小标签等宽字距 .14em；页眉衬线；正文 11–12px'],['波形态','刻度条 + 底部标尺，静默时降为细线'],['动效','仅条形推进与呼吸，无发光']],
+    pros:['最贴合「观测仪器」概念：本身就是遥测记录纸／航天手册','浅底黑字，长段推理与投影可读性三个里最高','纸本、木版、朱印可自然承接释儒道题材，无需另加装饰符号','朱红只做状态色，三家身份降为标尺刻度，避免三色霓虹打架','印刷物、展签、说明书延展成本低'],
+    cons:['暗场展厅浅底刺眼，与现有 demo 的低照度观感断裂','透视线框 + 半调网点容易装饰过度，必须限定在页眉与波形区','#f0471f 与现有儒色 #ff6644 接近，三家配色需整体重映射','karaoke 发光、FFT 柱都要重画；改动量中'],
+    effort:'中 · 主要是 CSS 令牌层 + 波形渲染器 + 页眉透视网格；不动 session / audio 链路。'
+  },
+  {
+    id:'v2',title:'B-2 · 矢量终端 / Black & acid green',sub:'对应参考图 2：黑底单色荧光绿、模块化细线框、十字角标、线框球体、网格透镜波形',
+    sw:[['#080b08','ground'],['#b6ff1f','signal'],['#d6ff6b','active'],['#16201a','panel']],
+    tokens:[['底色','#080b08 近黑，不用纯 #000 以留层次'],['墨线','rgba(182,255,31,.5) 细线，四角十字定位标'],['强调','#d6ff6b 只用于当前句、活跃声道、选中'],['字体','等宽小标签 + // 前缀；页眉用超窄展示体'],['波形态','四种动画按列独立切换，只以名字称呼（网格透镜已废弃）'],['动效','波形仅由音频振幅驱动，无节点点亮、无轮换动画']],
+    pros:['与现状暗场零冲突，且延续「机器／终端」血脉，是三个里最平滑的升级','单色 + 一个强调色，天然收编现有散乱字号与霓虹三色','角标、模块化行、刻度尺直接对应 B 的状态轨与交接时间轴','线框球体／网格波形可复用现有 canvas 的 FFT 数据，只换渲染器','改动集中在 CSS + waveform.js，风险最低'],
+    cons:['黑 + 荧光绿太接近通用「赛博／黑客」视觉，装置独特性会被削弱','三家身份色被单一绿吞掉，只能靠 CH 编号与立体声位置区分','高饱和绿长时间阅读易疲劳，需限制在细线与小面积','超窄展示体在窄三栏里放不下，只能用于页眉'],
+    effort:'低–中 · 建议作为基线：先做令牌治理、响应式与 reduced-motion，再决定是否换到 B-3。'
+  },
+  {
+    id:'v3',title:'B-3 · 双色印刷 / Acid yellow & ultramarine',sub:'对应参考图 3：把同一套模块网格反相成高对比浅底双色，图形冲击最强',
+    sw:[['#f3ef00','acid yellow'],['#1720c8','ultramarine'],['#e7e300','panel'],['#0e17a0','deep']],
+    tokens:[['底色','#f3ef00 荧光黄，不用纯白'],['墨线','rgba(23,32,200,.72) 细线 + 四角十字定位标'],['强调','#1720c8 同色加深，靠面积与粗细分层而非换色'],['字体','与 B-2 同套等宽 / 超窄展示体，字重加一档'],['波形态','与 B-2 共用线框网格透镜，仅换色'],['动效','与 B-2 一致，XML 结构完全相同']],
+    pros:['三个里视觉冲击最强，最接近展览主视觉／海报','与 B-2 共用整套网格和角标，工程上几乎零额外成本（换 CSS 变量即可）','双色印刷逻辑清晰，海报、铭牌、说明书可一次延展','浅底保证长文本可读，同时比 B-1 更「未来」'],
+    cons:['荧光黄 + 群青长时间注视疲劳，暗场展厅同样刺眼','高饱和双色容易压过内容，三路推理有沦为底纹的风险','与声音／哲思的沉静气质冲突，可能显得喧闹','需实测正文对比度 ≥ 4.5:1，必要时把正文降到深蓝 #0e17a0'],
+    effort:'低（与 B-2 共用结构）· 可作为 B-2 的「展览模式」皮肤共存，用一套变量切换。'
+  }
+];
+const tpl=document.getElementById('screen-tpl');
+const host=document.getElementById('panels');
+variants.forEach((v,i)=>{
+  const panel=document.createElement('section');
+  panel.className='panel'+(i===0?' on':'');
+  panel.id='p-'+v.id;
+  const frag=tpl.content.cloneNode(true);
+  frag.querySelector('.mh-title').textContent=v.title;
+  frag.querySelector('.mh-sub').textContent=v.sub;
+  frag.querySelector('.rf').classList.add(v.id);
+  const wave=v.id==='v1'?barsSVG():meshSVG();
+  frag.querySelectorAll('.rf-wave').forEach(w=>{w.innerHTML=wave;});
+  panel.appendChild(frag);
+  let sw='<div class="swatches">';
+  v.sw.forEach(s=>{sw+='<div class="sw" style="background:'+s[0]+'"><span>'+s[1]+'</span></div>';});
+  sw+='</div>';
+  let tk='<div class="tokens">';
+  v.tokens.forEach(t=>{tk+='<p><b>'+t[0]+'</b>'+t[1]+'</p>';});
+  tk+='</div>';
+  const li=arr=>'<ul>'+arr.map(x=>'<li>'+x+'</li>').join('')+'</ul>';
+  panel.insertAdjacentHTML('beforeend',
+    '<div class="detail"><div class="card"><h3>设计令牌</h3>'+sw+tk+'</div>'+
+    '<div><div class="card" style="margin-bottom:16px"><h3>优势</h3>'+li(v.pros)+'</div>'+
+    '<div class="card cons"><h3>代价 / 风险</h3>'+li(v.cons)+'</div></div></div>'+
+    '<div class="verdict"><b>改动量：'+v.effort+'</b></div>');
+  host.appendChild(panel);
+});
+const tabs=document.querySelectorAll('.tab');
+const panels=document.querySelectorAll('.panel');
+tabs.forEach(tab=>tab.addEventListener('click',()=>{
+  tabs.forEach(t=>t.classList.toggle('on',t===tab));
+  panels.forEach(p=>p.classList.toggle('on',p.id===tab.dataset.target));
+}));
+</script>
+</body>
+</html>

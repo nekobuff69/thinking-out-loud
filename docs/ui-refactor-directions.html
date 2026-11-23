@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thinking Out Loud · 视觉方向决策记录</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#f5f4f0;color:#1c1b19;font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:72px 28px}
+  .eyebrow{font:12px ui-monospace,Consolas,monospace;letter-spacing:.16em;text-transform:uppercase;color:#6d6a64}
+  h1{font-size:30px;font-weight:600;letter-spacing:-.02em;margin:14px 0 18px}
+  p{font-size:15px;color:#4a4843;margin-bottom:14px}
+  .card{background:#fff;border:1px solid #dcd9d2;border-radius:12px;padding:20px 22px;margin:22px 0}
+  .card h2{font-size:14px;font-weight:600;margin-bottom:12px}
+  .card ul{list-style:none;font-size:14px;color:#3b3935}
+  .card li{padding-left:16px;position:relative;margin-bottom:8px}
+  .card li::before{content:"";position:absolute;left:0;top:.65em;width:6px;height:6px;border-radius:50%;background:#2f5d54}
+  .card.drop li::before{background:#b6604b}
+  a{display:inline-block;font-size:15px;color:#2c5a49;border-bottom:1px solid #9fc4b2;text-decoration:none;padding-bottom:2px}
+  a:hover{color:#1c1b19;border-color:#1c1b19}
+  .foot{margin-top:36px;font:12px ui-monospace,Consolas,monospace;color:#6d6a64}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Thinking Out Loud · design decision · 2026-11-24</div>
+  <h1>视觉方向已收敛</h1>
+  <p>本页原有的三方向对比（A 宣纸考据 / B 观测仪器 / C 声场剧场）已被替换。M先生 2026-11-24 决定：仅保留 B 的概念骨架，美学向复古未来主义探索；A 与 C 彻底废弃，不再保留为备选。</p>
+
+  <div class="card drop">
+    <h2>已废弃</h2>
+    <ul>
+      <li>A 宣纸考据：浅底宋体朱印方向</li>
+      <li>C 声场剧场：无框三束光 / 全宽光带方向</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>保留并演进</h2>
+    <ul>
+      <li>B 的概念骨架：状态轨、频道编号、交接时间轴、波形、三栏并行推理</li>
+      <li>移除 Debug overlay（含 ?debug 与快捷键）</li>
+      <li>保留 Mute / Solo（每列 M / S）与 History session（列表 / 回放 / 清空）</li>
+      <li>三张参考图推导三个复古未来主义变体：B-1 推力手册、B-2 矢量终端、B-3 双色印刷</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>已锁定 · 2026-11-24</h2>
+    <ul>
+      <li>B-2 矢量终端（黑底荧光绿）为基线；B-1 / B-3 降为可切换皮肤</li>
+      <li>History 改为折叠 sidebar，默认收起，不常驻占宽</li>
+      <li>FFT 可视化弃用网格透镜，改回直观波形；最终选定 Mirrored bars / Oscilloscope / Dot matrix / Radial voiceprint 四种（Chart recorder / Spectral ridge 淘汰）</li>
+      <li>预设选题与自定义问题收进命令面板（/ 打开），主区域让位给三列推理与波形</li>
+      <li>交互重构：删除整个底栏与所有重复 Ask / History / Stop 入口；点选预设即提问、无确认按钮；浮层互斥</li>
+      <li>命题层纠偏：问题不得缩在功能条里。问题独立为 100px 命题层（20px 字号），功能层降为底部 28px 只读工具带；视线顺序 问 → 答 → 声 → 工具</li>
+      <li>去噪：删除一问三答分叉线、节点点亮与所有自动轮换动画；问题区与三列之间无任何阻隔</li>
+      <li>界面文案全英文，列头去掉释 / 儒 / 道汉字（<code>config.js</code> 的 label 同步改）</li>
+      <li>波形切换从选题面板移到波形面板：点波形区唤起就近菜单，<code>V</code> 不弹菜单</li>
+      <li>History 改推挤式 dock（与三列同处 flex 行），展开时三列收窄但<b>不覆盖 CH 03</b>；问题区在 dock 之上不受影响</li>
+      <li><b>布局与交互落点已确认满意</b>（2026-11-24 02:41），后续不再改布局</li>
+      <li><b>每列独立 visual</b>：状态从全局单值改为 <code>colVariants[]</code>；菜单锚定被点列且只改该列；工具带 WAVE 改为按列显示动画名字（<code>SCOPE / BARS / MATRIX</code>）</li>
+      <li><b><code>V</code> 改为随机 shuffle 三列</b>：4 选 3 互不相同、保证与当前组合不同、不打开菜单；<code>Shift+V</code> 复位三列为默认 Oscilloscope</li>
+      <li><b>删除所有变体代号</b>（2026-11-24 02:45）：波形面板内零文字零角标，菜单只留动画名字，工具带 / 提示 / 对比卡片 / 文档正文一律用名字称呼；<code>V</code> / <code>Shift+V</code> 快捷键字母保留</li>
+      <li><b>波形变更零 notification</b>（02:47–02:49）：shuffle / 复位 / 菜单 apply / 卡片应用后都不弹 toast；动画变化本身即反馈。toast 仅供 session 状态（开始 / 停止 / 保存 / 重播 / 运行中拦截）使用</li>
+    </ul>
+  </div>
+
+  <a href="ui-refactor-retro-futurism.html">三个复古未来主义方案 →</a>
+  <a href="ui-refactor-b2-detail.html" style="margin-left:24px">B-2 交互与波形细化 →</a>
+
+  <p class="foot">前序文档仅为方向提案，未改动运行时代码。当前实现仍为原始终端风格。</p>
+</div>
+</body>
+</html>
