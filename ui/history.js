@@ -19,7 +19,7 @@ import "./history.css";
 /**
  * @param {HTMLElement} container
  * @param {import("../session/storage.js").SessionStore} store
- * @param {(session: import("../session/storage.js").SessionData) => void} onReplay
+ * @param {(session: import("../session/storage.js").SessionData, displayNumber: string) => void} onReplay
  * @returns {HistoryAPI}
  */
 export function createHistory(container, store, onReplay) {
@@ -132,8 +132,10 @@ export function createHistory(container, store, onReplay) {
       item.appendChild(line);
       item.appendChild(meta);
       item.addEventListener("click", () => {
-        onReplay(session);
-        hide();
+        onReplay(session, String(sessions.length - index).padStart(3, "0"));
+        // Route through the overlay manager so Escape / H stay in sync.
+        if (onClose) onClose();
+        else hide();
       });
       list.appendChild(item);
     }

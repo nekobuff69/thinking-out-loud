@@ -9,6 +9,7 @@ import { config } from "./config.js";
 import { createPromptSelector } from "./ui/prompt-selector.js";
 import { createHistory } from "./ui/history.js";
 import { createOverlayState } from "./ui/overlay-state.js";
+import { questionView } from "./ui/question-view.js";
 import { createWaveformSelector } from "./audio/waveform-variant-selector.js";
 import { WAVEFORM_SHORT_NAMES } from "./audio/waveform-variants.js";
 import { createWaveformPicker } from "./ui/waveform-picker.js";
@@ -63,6 +64,22 @@ function showToast(message) {
   setTimeout(() => toast.remove(), 1800);
 }
 
+/**
+ * The only place the Question proposition layer is written. Both a fresh Ask
+ * and a History replay go through here, so the text on screen always belongs
+ * to the Session being spoken.
+ * @param {string} question
+ * @param {string} sessionId
+ * @returns {void}
+ */
+function setQuestion(question, sessionId) {
+  const view = questionView(question, sessionId, config.curatedPrompts);
+  qText.textContent = view.text;
+  qSession.textContent = view.sessionId;
+  tSession.textContent = view.sessionId;
+  qSource.textContent = view.source;
+}
+
 // --- Columns (Column API unchanged) ---
 const columns = new Map();
 for (const model of config.models) {
@@ -75,8 +92,15 @@ const promptSelector = createPromptSelector(paletteHost, config.curatedPrompts, 
 promptSelector.onClose(() => closeOverlay("palette"));
 
 // --- History dock (push-style flex sibling, never covers a Column) ---
-const historyPanel = createHistory(historyDock, store, (session) => {
+const historyPanel = createHistory(historyDock, store, (session, displayNumber) => {
+  // Orchestrator ignores replay while a Session is running; keep the Question
+  // block in sync by declining the whole action instead of switching text.
+  if (document.body.classList.contains("session-running")) {
+    showToast("Running · stop first");
+    return;
+  }
   showToast("Replaying session");
+  setQuestion(session.question, displayNumber);
   orchestrator.replay(session);
 });
 historyPanel.onOpen(() => openOverlay("history"));
@@ -216,14 +240,8 @@ stopBtn.addEventListener("click", () => {
 async function ask(question) {
   sessionCount += 1;
   const id = String(sessionCount).padStart(3, "0");
-  qText.textContent = question;
-  qSession.textContent = id;
-  tSession.textContent = id;
+  setQuestion(question, id);
   showToast("Session started");
-  const curatedIndex = config.curatedPrompts.indexOf(question);
-  qSource.textContent = curatedIndex >= 0
-    ? "Curated " + String(curatedIndex + 1).padStart(2, "0")
-    : "Free-text question";
   tOrder.textContent = config.models.map((_, i) => "0" + (i + 1)).join(" → ");
   closeOverlay("palette");
   try {
