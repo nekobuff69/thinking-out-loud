@@ -608,4 +608,98 @@ describe("mute and solo", () => {
     assert.strictEqual(saveCount, 1, "replay should save exactly once");
     mock.reset();
   });
+
+  it("replay synthesizes models sequentially, never concurrently", async () => {
+    const names = ["mA", "mB", "mC"];
+    /** @type {string[]} */
+    const started = [];
+    /** @type {Map<string, () => void>} */
+    const doneCallbacks = new Map();
+
+    const columns = new Map();
+    const ttsEngines = new Map();
+    const audioGraph = {
+      clearChannels: () => {},
+      createChannel: () => ({
+        analyser: {},
+        gain: {},
+        play: () => {},
+        playStream: (/** @type {any} */ streamFn) => {
+          streamFn(() => {});
+          return { stop: () => {} };
+        },
+        stopAll: () => {},
+      }),
+      getContext: () => undefined,
+    };
+
+    for (const name of names) {
+      columns.set(name, {
+        appendToken: () => {}, clear: () => {}, setError: () => {},
+        attachWaveform: () => {}, stopWaveform: () => {},
+      });
+      ttsEngines.set(name, {
+        load: async () => {},
+        startStream: (
+          /** @type {string} */ _text,
+          /** @type {string} */ _voice,
+          /** @type {any} */ _onChunk,
+          /** @type {{ onDone?: () => void, onError?: (m: string) => void }} */ cbs
+        ) => {
+          started.push(name);
+          if (cbs?.onDone) doneCallbacks.set(name, cbs.onDone);
+          // Deliberately do NOT call onDone — test drives completion manually
+        },
+        stop: () => {},
+        destroy: () => {},
+      });
+    }
+
+    const orchestrator = new Orchestrator({
+      models: names.map((n, i) => ({
+        name: n, url: "https://example.test/v1", model: "test", voice: "v",
+        color: "#fff", pan: i - 1, provider: "test",
+      })),
+      systemPrompt: "t",
+      ttsConfig: { maxTokens: 200, useTextChunker: false, randomizePlayback: false },
+      audioGraph,
+      columns,
+      ttsEngines,
+      storage: { save: () => {}, saveQuestion: () => {} },
+    });
+
+    const replayPromise = orchestrator.replay({
+      id: "old-session",
+      timestamp: new Date().toISOString(),
+      question: "q",
+      mode: "monologue",
+      models: names.map((n) => ({ name: n, reasoningText: "short reasoning text" })),
+      playbackOrder: names,
+    });
+
+    // drainText's visual feed has ~16ms awaits; give all three time to run.
+    await new Promise((r) => setTimeout(r, 120));
+
+    // Root cause: replay fired all three TTS syntheses concurrently, which
+    // starves the single CPU TTS server and produces audible gaps. Only the
+    // first pipeline should be synthesizing at this point.
+    assert.ok(started.length >= 1, "first model should start synthesizing");
+    assert.strictEqual(
+      started.length,
+      1,
+      `only one model should synthesize at a time, got: ${started.join(",")}`
+    );
+
+    // Completing the first model must release the second, then the third.
+    doneCallbacks.get(started[0])?.();
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(started.length, 2, "second model starts after first finishes");
+
+    doneCallbacks.get(started[1])?.();
+    await new Promise((r) => setTimeout(r, 40));
+    assert.strictEqual(started.length, 3, "third model starts after second finishes");
+
+    doneCallbacks.get(started[2])?.();
+    await replayPromise;
+  });
 });

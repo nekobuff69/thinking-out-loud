@@ -102,6 +102,8 @@ export class ChannelPipeline {
 	// Replay synthesis guard — prevents double invocation of #synthesizeReplay
 	/** @type {boolean} */
 	#replaySynthesisActive = false;
+	/** @type {boolean} True when a paused replay pipeline owes a deferred #synthesizeReplay() call, released by resume(). */
+	#replayPendingSynthesis = false;
 	/** @type {(() => void) | null} */
 	#reconnectUnsub = null;
 
@@ -527,8 +529,15 @@ export class ChannelPipeline {
 	// ------------------------------------------------------------------
 
 	/**
-	 * Replay stored reasoning text using old single-shot protocol.
-	 * Uses startStream(fullText) + playStream(streamFn) — no change.
+	 * Replay stored reasoning text using the single-shot TTS protocol.
+	 *
+	 * Visual text feeding runs for every pipeline so all columns refill at once.
+	 * Synthesis is sequenced by monologue: the first pipeline speaks immediately,
+	 * paused pipelines defer synthesis until resume() releases their turn. This
+	 * keeps only one TTS request in flight at a time — running all three at once
+	 * starves the CPU-only TTS server and produces audible underrun gaps.
+	 *
+	 * Uses startStream(fullText) + playStream(streamFn).
 	 * @param {string} text
 	 * @returns {Promise<void>}
 	 */
@@ -541,7 +550,9 @@ export class ChannelPipeline {
 		this.#unsentBuffer = "";
 		this.#audioStream = null;
 		this.#ttsStreamOpened = false;
-		this.#paused = false;
+		this.#replayPendingSynthesis = false;
+		// NOTE: do NOT clear #paused here. The orchestrator sets it in
+		// #setupPipelines to keep replay sequential, exactly like the live path.
 
 		// Feed text token-by-token with visual delay, same TTS path as live
 		const chunkSize = 3;
@@ -556,12 +567,18 @@ export class ChannelPipeline {
 			}
 		}
 
-		this.#synthesizeReplay();
+		if (this.#paused) {
+			// Defer synthesis until this pipeline's turn comes up. Do not signal
+			// idle yet — a paused pipeline must wait for its resume() and playback.
+			this.#replayPendingSynthesis = true;
+		} else {
+			this.#synthesizeReplay();
+		}
 		// Replay text feeding is not an LLM stream — clear the flag so isActive
 		// reflects only playback, and signal idle immediately when nothing plays.
 		this.#streamActive = false;
 		this.#emitProgress("finished");
-		if (!this.#ttsActive) this.#signalIdle();
+		if (!this.#ttsActive && !this.#replayPendingSynthesis) this.#signalIdle();
 	}
 
 	/**
@@ -635,6 +652,7 @@ export class ChannelPipeline {
 		this.#ttsStreamOpened = false;
 		this.#unsentBuffer = "";
 		this.#liveBuffer = "";
+		this.#replayPendingSynthesis = false;
 	}
 
 	/**
@@ -655,6 +673,15 @@ export class ChannelPipeline {
 
 	resume() {
 		this.#paused = false;
+
+		// Deferred replay synthesis: this pipeline's monologue turn has arrived.
+		// Use the replay single-shot path, not the live TextChunker path.
+		if (this.#replayPendingSynthesis) {
+			this.#replayPendingSynthesis = false;
+			this.#synthesizeReplay();
+			return;
+		}
+
 		this.#contentHit = false;
 		this.#ttsStreamOpened = false;
 
