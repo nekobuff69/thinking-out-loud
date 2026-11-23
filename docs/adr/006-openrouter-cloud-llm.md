@@ -20,7 +20,7 @@ Requirements that shaped the decision:
 Move LLM inference to **OpenRouter**, retaining the OpenAI-compatible client abstraction.
 
 - `config.js`: all three models use `https://openrouter.ai/api/v1`; the model slug comes from `VITE_OPENROUTER_MODEL` (default `openai/gpt-oss-20b`) and the key from `VITE_OPENROUTER_API_KEY` in `.env` (git-ignored, injected by Vite at serve/build time). Internal model names are stable code names A/B/C (not the API model, not the role); old saved sessions with Qwen/Gemma/GPT-OSS are normalized on replay.
-- `llm/providers/openai-compatible-provider.js`: sends `Authorization: Bearer <key>` and `max_tokens` (from `tts.llmMaxTokens`, default 1600) on each streaming request. It also reports `finish_reason: "length"` via an `onTruncated` callback so a cut-off thought is visible instead of silent.
+- `llm/providers/openai-compatible-provider.js`: sends `Authorization: Bearer <key>` and `max_tokens` (from `tts.llmMaxTokens`, default 3200) on each streaming request. It also reports `finish_reason: "length"` via an `onTruncated` callback so a cut-off thought is logged in the debug overlay instead of passing silently.
 - `llm/health-check.js`: sends the same Bearer header on `GET /models`.
 - `session/orchestrator.js`: passes `apiKey` into health checks and provider construction; the provider cache key includes the key.
 - TTS remains a local Pocket TTS server on port 8080. The local LLM server is no longer a runtime dependency.
@@ -44,7 +44,7 @@ OpenRouter speaks the OpenAI-compatible protocol already implemented in the code
 - **Network dependency and per-request cost.** An unavailable network or exhausted balance blocks all columns.
 - **Legacy CLI scripts are not migrated.** `getReasoningContent.js` / `saveReasoning.js` do not forward `apiKey`, so they will get 401 from OpenRouter until updated. Browser flow is unaffected.
 - **Provider-specific reasoning format.** OpenRouter returns `delta.reasoning` for `gpt-oss-20b`; the client reads both `delta.reasoning` and `delta.reasoning_content`. A model that returns neither produces empty reasoning columns in `separate` mode. Confirmed via a direct OpenRouter smoke test on 2026-11-23; full browser end-to-end verification is separate.
-- **Generation length vs. a complete thought.** Reasoning tokens count toward `max_tokens`. Measured on `gpt-oss-20b`: 200 tokens cut a thought mid-sentence (`finish_reason: "length"`); ~1243 tokens let it finish. `llmMaxTokens` defaults to 1600 so thoughts complete. Raising it increases per-request cost and playback duration; truncation is now surfaced via `onTruncated` / `pipeline-truncated` / a column marker so it cannot pass silently.
+- **Generation length vs. a complete thought.** Reasoning tokens count toward `max_tokens`. Measured on `gpt-oss-20b`: 200 tokens cut a thought mid-sentence (`finish_reason: "length"`); ~1243 tokens let it finish. 1600 still truncated two of three columns in a real run — reasoning length varies widely by prompt, so `llmMaxTokens` defaults to 3200 for headroom. Raising it increases per-request cost (still negligible at this model's price) and playback duration; truncation remains observable via `onTruncated` / `pipeline-truncated` in the debug overlay, never in the column UI.
 
 ### Verification
 

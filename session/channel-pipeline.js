@@ -217,7 +217,6 @@ export class ChannelPipeline {
 						// Model stopped on its token limit, mid-thought. Surface a
 						// non-destructive notice without touching reasoningText
 						// (which feeds storage and future replay).
-						this.#column.setTruncated?.(finishReason);
 						this.#eventBus?.emit("pipeline-truncated", {
 							modelName: this.#model.name,
 							finishReason,

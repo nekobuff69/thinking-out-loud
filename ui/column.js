@@ -12,7 +12,6 @@ import "./column.css";
  * @property {(token: string) => void} appendToken
  * @property {() => void} clear
  * @property {(message: string) => void} setError
- * @property {(finishReason?: string) => void} setTruncated
  * @property {(analyserNode: AnalyserNode, color: string) => void} attachWaveform
  * @property {() => void} stopWaveform
  * @property {(active: boolean) => void} setMuted
@@ -386,23 +385,6 @@ export function createColumn(container, model) {
 		reasoningEl.style.color = "";
 	}
 
-	/**
-	 * Non-destructive notice that the LLM stopped on its token limit. Appended
-	 * after the reasoning text so it does not enter reasoningText (and therefore
-	 * never pollutes session storage or replay). Does not touch karaoke spans.
-	 * @param {string} [finishReason] - finish_reason reported by the provider.
-	 * @returns {void}
-	 */
-	function setTruncated(finishReason = "length") {
-		if (reasoningEl.querySelector(".truncation-notice")) return; // once per run
-		finalizeWord();
-		const notice = document.createElement("span");
-		notice.className = "truncation-notice";
-		notice.textContent = `  [truncated: ${finishReason} — raise llmMaxTokens]`;
-		reasoningEl.appendChild(notice);
-		reasoningEl.scrollTop = reasoningEl.scrollHeight;
-	}
-
 	/** @type {(() => void) | null} */
 	let onMuteToggleCallback = null;
 	/** @type {(() => void) | null} */
@@ -451,7 +433,6 @@ export function createColumn(container, model) {
 		finalizeWord,
 		clear,
 		setError,
-		setTruncated,
 		attachWaveform,
 		stopWaveform,
 		startKaraoke,

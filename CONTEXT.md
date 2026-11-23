@@ -164,7 +164,7 @@ Abstract interface for LLM streaming. Concrete implementations hide fetch → SS
 // OpenAICompatibleProvider is the default implementation
 const provider = new OpenAICompatibleProvider({ url, model, reasoningFormat, apiKey, llmMaxTokens });
 // apiKey → Authorization: Bearer <key>; llmMaxTokens → max_tokens in request body
-// (Orchestrator passes config.models[].apiKey and config.tts.llmMaxTokens, default 1600)
+// (Orchestrator passes config.models[].apiKey and config.tts.llmMaxTokens, default 3200)
 await provider.streamReasoning(
   question,
   systemPrompt,
@@ -188,7 +188,7 @@ await provider.streamReasoning(
 
 `llm/llm-stream.js` preserves a backward-compatible `streamReasoning()` wrapper that forwards `apiKey` and `llmMaxTokens` (or legacy `maxTokens`) from its options object. `llm/health-check.js` now takes `(baseUrl, apiKey, timeoutMs)` and sends the same Bearer header on `GET /models`.
 
-**Token cap and truncation:** `llmMaxTokens` (default 1600) is the only generation limit — it is sent to the API as `max_tokens`. There is no separate TTS word cap: every reasoning token the model returns is converted to speech. When the model stops on `finish_reason: "length"`, the provider fires `onTruncated` once; the pipeline emits `pipeline-truncated` on the event bus and calls `column.setTruncated()`, which appends a non-destructive `[truncated: length — raise llmMaxTokens]` marker to the column without altering `reasoningText` (so storage and replay stay clean). The debug overlay logs the event as an error line. Measured on `gpt-oss-20b`: 200 tokens cut a thought mid-sentence, ~1243 tokens complete one.
+**Token cap and truncation:** `llmMaxTokens` (default 3200) is the only generation limit — it is sent to the API as `max_tokens`, and reasoning tokens count toward it. There is no separate TTS word cap: every reasoning token the model returns is converted to speech. When the model stops on `finish_reason: "length"`, the provider fires `onTruncated` once; the pipeline emits `pipeline-truncated` on the event bus, which the debug overlay logs as an error line. Nothing is appended to the column UI. Measured on `gpt-oss-20b`: 200 tokens cut a thought mid-sentence, ~1243 tokens complete one — but real reasoning length varies widely by prompt, and 1600 still truncated two of three columns in practice.
 
 ### PocketTtsBackend (`tts/pocket-tts-backend.js`)
 

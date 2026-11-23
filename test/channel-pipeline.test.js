@@ -311,7 +311,7 @@ describe("ChannelPipeline", () => {
 
     const column = {
       appendToken: (/** @type {string} */ t) => displayedTokens.push(t),
-      clear: () => {}, setError: () => {}, setTruncated: () => {},
+      clear: () => {}, setError: () => {},
       attachWaveform: () => {}, stopWaveform: () => {},
     };
     const pipeline = new ChannelPipeline({

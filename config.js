@@ -102,7 +102,7 @@ export const config = {
 
 	tts: {
 		serverUrl: "http://localhost:8080", // Pocket TTS server
-		llmMaxTokens: 1600, // LLM max_tokens; ~1243 used for a full thought on gpt-oss-20b, 200 truncates mid-sentence
+		llmMaxTokens: 3200, // LLM max_tokens; reasoning counts toward it. 200 truncates mid-sentence; a full thought measured ~1243, but real runs vary widely by prompt (1600 still cut two of three columns), so keep generous headroom
 		sentenceTimeoutTokens: 200, // force-flush threshold per sentence
 		useTextChunker: true, // enable chunker for prosody tuning
 		chunkerMaxWords: 20, // words in buffer before force-flush (small = shorter TTS requests = lower first-audio latency on CPU)

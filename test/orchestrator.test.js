@@ -634,7 +634,7 @@ describe("mute and solo", () => {
         createChannel: () => ({ analyser: {}, gain: {}, openStream: () => ({ feed() {}, end() {}, stop() {} }), playStream: (fn) => { fn(() => {}); return { stop() {} }; }, stopAll() {} }),
         getContext: () => undefined,
       },
-      columns: new Map([["A", { appendToken() {}, clear() {}, setError() {}, setTruncated() {}, attachWaveform() {}, stopWaveform() {} }]]),
+      columns: new Map([["A", { appendToken() {}, clear() {}, setError() {}, attachWaveform() {}, stopWaveform() {} }]]),
       ttsEngines: new Map([["A", { load: async () => {}, startStream(_t, _v, _c, cb) { cb?.onDone?.(); }, stop() {}, destroy() {} }]]),
       storage: { save(s) { savedSession = s; }, saveQuestion() {} },
     });
