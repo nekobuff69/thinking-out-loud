@@ -30,14 +30,16 @@
 | **Reasoning** | The LLM's internal thought process — the `reasoning_content` field in the API response | Thinking, chain of thought, internal monologue, reasoning block |
 | **Reasoning format** | How the provider separates reasoning from final answer: `separate` (dedicated field), `tagged` (`<think>` tags), or `none` (no separation) | Format mode, parsing mode |
 | **Reasoning content** | The raw text of the LLM's reasoning, streamed token by token | Thinking block, thought stream, reasoning stream |
-| **Final answer** | The LLM's polished output — the `content` field in the API response. Deliberately suppressed. | Response, output, answer, completion |
+| **Final answer** | The LLM's polished output — the `content` field in the API response. Recorded into `SessionModelData.answer` for later use, but deliberately not displayed or spoken yet. | Response, output, answer, completion |
 | **Content boundary** | The point in the stream where the LLM transitions from reasoning to final answer. Deliberately suppressed — only reasoning is displayed and spoken. | Cut point, answer start, switch |
 | **Streaming** | Receiving LLM output token-by-token via SSE as it is generated | Live, real-time, chunked |
 | **Token** | A single unit of text from the LLM stream (sub-word or punctuation) | Piece, fragment, chunk (when referring to text, not audio) |
 | **LLM max tokens** | `tts.llmMaxTokens` (default 1600) — the only generation limit, sent to the API as `max_tokens`. Every reasoning token the model returns is converted to speech; there is no separate TTS word cap. | Token cap, generation cap, output budget |
 | **Truncation** | The model stopped with `finish_reason: "length"` — its thought was cut off by the token limit. Surfaced via the provider's `onTruncated` callback, a `pipeline-truncated` event, and a `[truncated: length — raise llmMaxTokens]` marker appended to the column (not stored in reasoning text). | Cut off, mid-thought stop, length stop |
 | **System prompt** | The instruction given to a model before the question, shaping its reasoning style. Each model has its own `systemPrompt` in config; falls back to the global `config.systemPrompt` if absent. | System message, preamble, context |
-| **Label** | The UI column header text displayed instead of the internal model name. Set via `label` in `ModelConfig`; falls back to `name` if absent. Currently "释·Buddhism", "儒·Confucianism", "道·Daoism". | Display name, heading, title |
+| **Internal name (code name)** | Stable identifier for a column/model, currently A / B / C. Used as the Map key across columns, TTS engines, sessions, mute/solo and playback order. Never displayed, not tied to the API model or the philosophical role. | Key, ID, code name |
+| **Label** | The UI column header text displayed instead of the internal code name. Set via `label` in `ModelConfig`; falls back to `name` if absent. Currently "释·Buddhism", "儒·Confucianism", "道·Daoism". | Display name, heading, title |
+| **Token usage** | Accounting from the provider's terminal usage chunk: `prompt_tokens`, `completion_tokens`, `total_tokens`, `reasoning_tokens`, `cost`. Stored per model as `tokenUsage`, not displayed. | Usage, accounting, cost |
 | **Role** | The philosophical persona assigned via a model's `systemPrompt`. The three roles are **Buddhism** (deconstructive, Chan Buddhist), **Confucianism** (relational, Confucian scholar), and **Daoism** (paradoxical, Daoist recluse). | Persona, character, voice (abstract) |
 
 ## TTS and audio domain

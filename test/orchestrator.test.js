@@ -609,6 +609,50 @@ describe("mute and solo", () => {
     mock.reset();
   });
 
+  it("save includes answer and token usage parsed from the LLM stream", async () => {
+    const sse = [
+      'data: {"choices":[{"delta":{"reasoning":"thinking"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"The answer."},"finish_reason":"stop"}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19,"cost":0.0002,"completion_tokens_details":{"reasoning_tokens":5}}}\n\n',
+      "data: [DONE]\n\n",
+    ].join("");
+
+    mock.method(globalThis, "fetch", async (url) => {
+      if (String(url).includes("/models")) {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+      }
+      return new Response(sse, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    });
+
+    let savedSession = null;
+    const orchestrator = new Orchestrator({
+      models: [{ name: "A", url: "https://example.test/v1", model: "test", voice: "v", color: "#fff", pan: 0, provider: "test", reasoningFormat: "separate" }],
+      systemPrompt: "t",
+      ttsConfig: { maxTokens: 200, useTextChunker: false, randomizePlayback: false },
+      audioGraph: {
+        clearChannels: () => {},
+        createChannel: () => ({ analyser: {}, gain: {}, openStream: () => ({ feed() {}, end() {}, stop() {} }), playStream: (fn) => { fn(() => {}); return { stop() {} }; }, stopAll() {} }),
+        getContext: () => undefined,
+      },
+      columns: new Map([["A", { appendToken() {}, clear() {}, setError() {}, setTruncated() {}, attachWaveform() {}, stopWaveform() {} }]]),
+      ttsEngines: new Map([["A", { load: async () => {}, startStream(_t, _v, _c, cb) { cb?.onDone?.(); }, stop() {}, destroy() {} }]]),
+      storage: { save(s) { savedSession = s; }, saveQuestion() {} },
+    });
+
+    await orchestrator.start("q");
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.ok(savedSession, "session should be saved");
+    const m = savedSession.models[0];
+    assert.strictEqual(m.answer, "The answer.", "answer recorded in saved session");
+    assert.strictEqual(m.tokenUsage?.prompt_tokens, 12);
+    assert.strictEqual(m.tokenUsage?.completion_tokens, 7);
+    assert.strictEqual(m.tokenUsage?.reasoning_tokens, 5);
+    assert.strictEqual(m.tokenUsage?.cost, 0.0002);
+    assert.ok(!m.reasoningText.includes("The answer."), "answer not mixed into reasoning text");
+    mock.reset();
+  });
+
   it("replay synthesizes models sequentially, never concurrently", async () => {
     const names = ["mA", "mB", "mC"];
     /** @type {string[]} */

@@ -172,6 +172,8 @@ await provider.streamReasoning(
     onReasoningToken: (token) => {},
     onContentStart: () => {},       // Content boundary reached
     onTruncated: (finishReason) => {}, // finish_reason="length" — output cut off mid-thought
+    onAnswer: (text) => {},         // Final answer fragments — recorded, not displayed
+    onUsage: (usage) => {},         // Token/cost accounting — recorded, not displayed
     onDone: () => {},
   },
   signal
@@ -225,6 +227,19 @@ store.clear();            // Remove all
 store.saveQuestion(text); // Deduplicated recent questions
 store.getQuestions();     // Recent question list
 ```
+
+**Stored session shape:** `SessionData` holds `id`, `timestamp`, `question`, `mode`,
+`playbackOrder`, and `models[]`. Each `models[]` entry stores the stable internal
+code name `name` (A/B/C — never displayed, never tied to the API model), display
+metadata (`displayName`, `color`, `voice`, `pan`), plus:
+- `reasoningText` — full reasoning, displayed and re-voiced on replay.
+- `answer` — final answer text, **recorded but not displayed or spoken** (reserved
+  for a future presentation form).
+- `tokenUsage` — `{ prompt_tokens, completion_tokens, total_tokens, reasoning_tokens?,
+  cost? }` from the provider's terminal usage chunk, recorded for accounting.
+
+Replay preserves `answer`/`tokenUsage` since it fires no new LLM request. Old
+sessions using the former names Qwen/Gemma/GPT-OSS are normalized to A/B/C on replay.
 
 ### SimpleEventBus (`session/event-bus.js`)
 
@@ -368,9 +383,9 @@ npm test
 |---|---|---|
 | `health-check.test.js` | 4 | URL construction with/without trailing slashes, fetch errors |
 | `llm-stream.test.js` | 4 | Endpoint construction with/without trailing slashes |
-| `openai-compatible-provider.test.js` | 14 | Separate/tagged/none reasoning formats, URL construction, Bearer header, `max_tokens` from `llmMaxTokens`, `onTruncated` on finish_reason=length / absent on stop, retry, abort |
-| `orchestrator.test.js` | 14 | stop() → Idle, no-save after stop, monologue sequencing, mute/solo, save-once, replay-saves-once, replay sequential synthesis (no concurrent TTS) |
-| `channel-pipeline.test.js` | 20 | Empty LLM stream, sentence streaming, sequential playback, no-word-cap full feed, content boundary, softStop isolation, reconnect recovery, resume, replay guard/defer-idle |
+| `openai-compatible-provider.test.js` | 15 | Separate/tagged/none reasoning formats, URL construction, Bearer header, `max_tokens` from `llmMaxTokens`, `onTruncated` on finish_reason=length / absent on stop, usage/answer collection, retry, abort |
+| `orchestrator.test.js` | 15 | stop() → Idle, no-save after stop, monologue sequencing, mute/solo, save-once, replay-saves-once, replay sequential synthesis, save includes answer/tokenUsage |
+| `channel-pipeline.test.js` | 21 | Empty LLM stream, sentence streaming, sequential playback, no-word-cap full feed, answer/usage recorded but not displayed, content boundary, softStop isolation, reconnect recovery, resume, replay guard/defer-idle |
 | `channel-pipeline-karaoke.test.js` | 5 | Karaoke progress tied to playback position, blend hand-off, no wall-clock drift |
 | `audio-graph-stream.test.js` | 19 | playStream PCM playback/scheduling/ducking/stop (7); openStream feed/end/stop/ducking/pre-buffer (12) |
 | `audio-graph-playback-position.test.js` | 4 | Playback-head sample accounting across scheduled segments and gaps |

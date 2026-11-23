@@ -5,6 +5,17 @@ import { SimpleEventBus } from "./event-bus.js";
 import { TextChunker } from "../tts/text-chunker.js";
 
 /**
+ * Legacy internal names → stable code names. Sessions saved before the names
+ * became A/B/C used model names as keys; replay must still find their columns.
+ */
+const LEGACY_MODEL_NAMES = /** @type {Record<string, string>} */ ({
+  Qwen: "A",
+  Gemma: "B",
+  "GPT-OSS": "C",
+});
+
+
+/**
  * @typedef {import("../config.js").ModelConfig} ModelConfig
  * @typedef {import("../config.js").TTSConfig} TTSConfig
  * @typedef {import("../audio/audio-graph.js").AudioGraph} AudioGraph
@@ -258,16 +269,24 @@ export class Orchestrator {
 			timestamp: new Date().toISOString(),
 		};
 
+		// Normalize legacy model names so old sessions still replay after the
+		// switch to stable code names (A/B/C).
+		const canonical = (/** @type {string} */ n) => LEGACY_MODEL_NAMES[n] ?? n;
+		const storedModels = sessionData.models.map((m) => ({
+			...m,
+			name: canonical(m.name),
+		}));
+
 		// Use stored model data (preserving original voices/pan) for replay,
 		// but merge with current config to get url/model/reasoningFormat for provider
-		const modelsForReplay = sessionData.models.map((stored) => {
+		const modelsForReplay = storedModels.map((stored) => {
 			const configModel = this.#models.find((m) => m.name === stored.name);
 			return configModel ? { ...configModel, ...stored } : stored;
 		});
 		// Preserve stored playback order (for sessions with randomized playback)
 		if (sessionData.playbackOrder) {
 			const orderMap = new Map(
-				sessionData.playbackOrder.map((name, i) => [name, i]),
+				sessionData.playbackOrder.map((name, i) => [canonical(name), i]),
 			);
 			modelsForReplay.sort(
 				(a, b) => (orderMap.get(a.name) ?? 99) - (orderMap.get(b.name) ?? 99),
@@ -281,7 +300,7 @@ export class Orchestrator {
 		this.#setState("Thinking");
 
 		const textFeeds = [];
-		for (const modelData of sessionData.models) {
+		for (const modelData of storedModels) {
 			const pipeline = this.#activeSessions.get(modelData.name);
 			if (!pipeline) continue;
 			const fullText = modelData.reasoningText || "";
@@ -387,6 +406,8 @@ export class Orchestrator {
 					voice: model.voice,
 					pan: model.pan,
 					reasoningText: "",
+					answer: "",
+					tokenUsage: null,
 				});
 			}
 
@@ -423,6 +444,10 @@ export class Orchestrator {
 			const modelData = this.#sessionData.models.find((m) => m.name === name);
 			if (modelData) {
 				modelData.reasoningText = pipeline.reasoningText;
+				// Replay produces no new LLM request — keep stored metadata when
+				// the pipeline has nothing new to report.
+				if (pipeline.answerText) modelData.answer = pipeline.answerText;
+				if (pipeline.tokenUsage) modelData.tokenUsage = pipeline.tokenUsage;
 			}
 		}
 

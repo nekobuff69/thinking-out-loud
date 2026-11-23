@@ -1,6 +1,7 @@
 /**
  * @typedef {Object} ModelConfig
- * @property {string} name
+ * @property {string} name - Stable internal code name (A/B/C). Used as Map key
+ *   across columns/engines/sessions; never displayed, never tied to the API model.
  * @property {string} [label] - Display label in the UI column header (falls back to name)
  * @property {string} [systemPrompt] - Per-model system prompt override (falls back to global config.systemPrompt)
  * @property {string} provider
@@ -56,7 +57,7 @@ export const config = {
 
 	models: [
 		{
-			name: "Qwen",
+			name: "A",
 			label: "释·Buddhism",
 			systemPrompt:
 				"You are a Chan Buddhist. You see through attachments, contemplate suffering and impermanence, and use koan-like paradox to break dualities.",
@@ -70,7 +71,7 @@ export const config = {
 			reasoningFormat: "separate",
 		},
 		{
-			name: "Gemma",
+			name: "B",
 			label: "儒·Confucianism",
 			systemPrompt:
 				"You are a Confucian scholar. You reason through human relationships, self-cultivation, and heavenly principle. You value harmony, virtue, and the doctrine of the mean.",
@@ -84,7 +85,7 @@ export const config = {
 			reasoningFormat: "separate",
 		},
 		{
-			name: "GPT-OSS",
+			name: "C",
 			label: "道·Daoism",
 			systemPrompt:
 				"You are a Daoist recluse. You question the usefulness of thinking itself, speak in natural metaphors, embrace paradox, and dwell in not-knowing.",

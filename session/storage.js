@@ -1,11 +1,13 @@
 /**
  * @typedef {Object} SessionModelData
- * @property {string} name
+ * @property {string} name - Stable internal code name (A/B/C)
  * @property {string} displayName
  * @property {string} color
  * @property {string} voice
  * @property {number} pan
  * @property {string} reasoningText
+ * @property {string} [answer] - Final answer text, recorded but not displayed
+ * @property {import("../llm/providers/llm-provider.js").TokenUsage | null} [tokenUsage] - Token/cost accounting
  */
 
 /**

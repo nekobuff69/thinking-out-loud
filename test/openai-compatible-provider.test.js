@@ -307,6 +307,42 @@ describe("OpenAICompatibleProvider", () => {
     assert.strictEqual(body.model, "openai/gpt-oss-20b");
   });
 
+  it("collects usage from a choices-less terminal chunk and answer content", async () => {
+    globalThis.fetch = /** @type {typeof fetch} */ (async () => {
+      return new Response(
+        sseStream(
+          'data: {"choices":[{"delta":{"reasoning":"thinking"}}],"model":"openai/gpt-oss-20b"}\n\n' +
+          'data: {"choices":[{"delta":{"content":"The answer "},"finish_reason":null}]}\n\n' +
+          'data: {"choices":[{"delta":{"content":"is 42."},"finish_reason":"stop"}]}\n\n' +
+          'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"cost":0.0001,"completion_tokens_details":{"reasoning_tokens":3}}}\n\n' +
+          "data: [DONE]\n\n"
+        ),
+        { status: 200 }
+      );
+    });
+
+    const provider = new OpenAICompatibleProvider({
+      url: "https://openrouter.ai/api/v1", model: "openai/gpt-oss-20b",
+      reasoningFormat: "separate",
+    });
+
+    /** @type {any} */
+    let usage = null;
+    /** @type {string[]} */
+    const answer = [];
+    await provider.streamReasoning("q", "sys", {
+      onUsage: (u) => { usage = u; },
+      onAnswer: (t) => answer.push(t),
+      onDone: () => {},
+    });
+
+    assert.deepStrictEqual(usage, {
+      prompt_tokens: 10, completion_tokens: 5, total_tokens: 15,
+      reasoning_tokens: 3, cost: 0.0001,
+    });
+    assert.strictEqual(answer.join(""), "The answer is 42.");
+  });
+
   it("reports truncation when finish_reason is length", async () => {
     globalThis.fetch = /** @type {typeof fetch} */ (async () => {
       return new Response(

@@ -62,6 +62,10 @@ export class ChannelPipeline {
 	#contentHit = false;
 	/** @type {string} */
 	#reasoningText = "";
+	/** @type {string} Final answer text, recorded for later use but never displayed or spoken. */
+	#answerText = "";
+	/** @type {import("../llm/providers/llm-provider.js").TokenUsage | null} */
+	#tokenUsage = null;
 	/** @type {SimpleEventBus | undefined} */
 	#eventBus;
 	/** @type {AbortController | null} */
@@ -169,6 +173,8 @@ export class ChannelPipeline {
 		this.#contentHit = false;
 		this.#isCapped = false;
 		this.#wordCount = 0;
+		this.#answerText = "";
+		this.#tokenUsage = null;
 		this.#unsentBuffer = "";
 		this.#audioStream = null;
 		this.#ttsStreamOpened = false;
@@ -198,6 +204,14 @@ export class ChannelPipeline {
 					},
 					onContentStart: () => {
 						this.setContentHit();
+					},
+					onAnswer: (text) => {
+						// Record the final answer for later use; never appended to
+						// the column, never spoken, never part of reasoningText.
+						this.#answerText += text;
+					},
+					onUsage: (usage) => {
+						this.#tokenUsage = usage;
 					},
 					onTruncated: (finishReason) => {
 						// Model stopped on its token limit, mid-thought. Surface a
@@ -726,6 +740,20 @@ export class ChannelPipeline {
 	 */
 	get reasoningText() {
 		return this.#reasoningText;
+	}
+
+	/** Final answer text — recorded only, never displayed or spoken.
+	 * @returns {string}
+	 */
+	get answerText() {
+		return this.#answerText;
+	}
+
+	/** Token/cost usage for this run, if the provider reported it.
+	 * @returns {import("../llm/providers/llm-provider.js").TokenUsage | null}
+	 */
+	get tokenUsage() {
+		return this.#tokenUsage;
 	}
 
 	/** Model name for orchestrator identification.

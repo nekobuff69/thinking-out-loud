@@ -1,12 +1,8 @@
 import { LLMProvider } from "./llm-provider.js";
 
 /**
- * @typedef {Object} StreamCallbacks
- * @property {(token: string) => void} [onReasoningToken]
- * @property {() => void} [onContentStart]
- * @property {() => void} [onDone]
- * @property {(finishReason: string) => void} [onTruncated] - Fired once when the
- *   model stops with finish_reason "length" (output cut off mid-thought).
+ * @typedef {import("./llm-provider.js").StreamCallbacks} StreamCallbacks
+ * @typedef {import("./llm-provider.js").TokenUsage} TokenUsage
  */
 
 /**
@@ -244,7 +240,8 @@ export class OpenAICompatibleProvider extends LLMProvider {
         if (this.#reasoningFormat === "tagged") {
           taggedParser.flush(
             (text) => callbacks.onReasoningToken?.(text),
-            () => {
+            (text) => {
+              if (text) callbacks.onAnswer?.(text);
               if (!state.contentStarted) {
                 state.contentStarted = true;
                 callbacks.onContentStart?.();
@@ -299,6 +296,21 @@ export class OpenAICompatibleProvider extends LLMProvider {
         continue;
       }
 
+      // Terminal usage chunk has no choices — account for it before the
+      // choice guard, otherwise it is silently dropped.
+      if (parsed.usage) {
+        const u = parsed.usage;
+        /** @type {TokenUsage} */
+        const usage = {
+          prompt_tokens: u.prompt_tokens ?? 0,
+          completion_tokens: u.completion_tokens ?? 0,
+          total_tokens: u.total_tokens ?? 0,
+          reasoning_tokens: u.completion_tokens_details?.reasoning_tokens,
+          cost: u.cost,
+        };
+        callbacks.onUsage?.(usage);
+      }
+
       const choice = parsed.choices?.[0];
       if (!choice) continue;
 
@@ -314,6 +326,8 @@ export class OpenAICompatibleProvider extends LLMProvider {
       switch (this.#reasoningFormat) {
         case "separate": {
           if (delta.content && delta.content.length > 0) {
+            // Record the final answer without displaying or voicing it.
+            callbacks.onAnswer?.(delta.content);
             if (!state.contentStarted) {
               state.contentStarted = true;
               callbacks.onContentStart?.();
@@ -338,6 +352,8 @@ export class OpenAICompatibleProvider extends LLMProvider {
               delta.content,
               (text) => callbacks.onReasoningToken?.(text),
               (text) => {
+                // Record answer text (outside <think>) without displaying it.
+                callbacks.onAnswer?.(text);
                 if (!state.contentStarted) {
                   state.contentStarted = true;
                   callbacks.onContentStart?.();

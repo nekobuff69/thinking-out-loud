@@ -274,6 +274,62 @@ describe("ChannelPipeline", () => {
     assert.ok(ttsTexts.some(t => t.includes("complex")), "should contain reasoning tokens");
   });
 
+  it("records answer and token usage without displaying or voicing them", async () => {
+    /** @type {string[]} */
+    const displayedTokens = [];
+    /** @type {string[]} */
+    const voicedTexts = [];
+    const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, reasoning_tokens: 3, cost: 0.0001 };
+
+    const mockTtsEngine = {
+      load: async () => {},
+      startStream: (
+        /** @type {string} */ text,
+        /** @type {string} */ _voice,
+        /** @type {any} */ _onChunk,
+        /** @type {{ onDone?: () => void }} */ callbacks
+      ) => {
+        voicedTexts.push(text);
+        callbacks?.onDone?.();
+      },
+      stop: () => {}, destroy: () => {},
+    };
+
+    const mockLlmProvider = {
+      streamReasoning: async (
+        /** @type {string} */ _q,
+        /** @type {string} */ _s,
+        /** @type {any} */ cb
+      ) => {
+        cb.onReasoningToken?.("Some reasoning.");
+        cb.onAnswer?.("The final answer.");
+        cb.onUsage?.(usage);
+        cb.onContentStart?.();
+        cb.onDone?.();
+      },
+    };
+
+    const column = {
+      appendToken: (/** @type {string} */ t) => displayedTokens.push(t),
+      clear: () => {}, setError: () => {}, setTruncated: () => {},
+      attachWaveform: () => {}, stopWaveform: () => {},
+    };
+    const pipeline = new ChannelPipeline({
+      model: { name: "A", url: "http://localhost", model: "test", voice: "v", color: "#fff", pan: 0, provider: "test" },
+      ttsConfig: { maxTokens: 200, sentenceTimeoutTokens: 30 },
+      column, ttsEngine: mockTtsEngine, llmProvider: mockLlmProvider,
+      audioGraph: defaultAudioGraph(),
+    });
+    pipeline.createChannel();
+    await pipeline.startStream("sys", "q");
+
+    assert.strictEqual(pipeline.answerText, "The final answer.", "answer recorded");
+    assert.deepStrictEqual(pipeline.tokenUsage, usage, "usage recorded");
+    assert.ok(!pipeline.reasoningText.includes("final answer"), "answer not in reasoning text");
+    assert.ok(!displayedTokens.join("").includes("final answer"), "answer not displayed in column");
+    assert.ok(!voicedTexts.join(" ").includes("final answer"), "answer not sent to TTS");
+  });
+
   it("feeds every reasoning token to TTS with no word cap", async () => {
     /** @type {string[]} */
     const voicedTexts = [];
