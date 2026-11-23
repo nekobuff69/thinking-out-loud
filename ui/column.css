@@ -34,7 +34,7 @@
 }
 
 .column-reasoning::-webkit-scrollbar-thumb {
-  background: #333;
+  background: var(--border-soft);
   border-radius: 2px;
 }
 
@@ -53,14 +53,14 @@
 
 /* Error state in columns */
 .error-msg {
-  color: #ff4444;
+  color: var(--danger);
   font-style: italic;
   opacity: 0.8;
 }
 
 .column.has-error {
-  border-color: #552222;
-  background: #0a0505;
+  border-color: var(--danger);
+  background: var(--danger-surface);
 }
 
 
@@ -70,9 +70,9 @@
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 3px;
-  border: 1px solid #555;
+  border: 1px solid var(--text-dim);
   background: transparent;
-  color: #888;
+  color: var(--text-dim);
   cursor: pointer;
   flex-shrink: 0;
 
@@ -85,22 +85,22 @@
 
 .mute-btn:hover,
 .solo-btn:hover {
-  border-color: #888;
-  color: #ccc;
+  border-color: var(--text-dim);
+  color: var(--text);
 }
 
 
 .mute-btn.active {
-  background: #cc3333;
-  border-color: #cc3333;
-  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--signal-active);
 }
 
 
 .solo-btn.active {
-  background: #ccaa22;
-  border-color: #ccaa22;
-  color: #fff;
+  background: var(--signal-active);
+  border-color: var(--signal-active);
+  color: var(--signal-active);
 }
 /* Karaoke word highlighting for TTS playback */
 .karaoke-word {

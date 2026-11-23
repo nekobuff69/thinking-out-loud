@@ -6,7 +6,7 @@
 }
 
 .prompt-card {
-  background: #111;
+  background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
   font-family: inherit;
@@ -20,12 +20,12 @@
 }
 
 .prompt-card:hover {
-  border-color: #444;
+  border-color: var(--border-soft);
 }
 
 .prompt-card.selected {
-  border-color: #00ff88;
-  background: #0a2015;
+  border-color: var(--signal-active);
+  background: var(--sf);
 }
 
 .prompt-card:disabled {
@@ -34,7 +34,7 @@
 }
 
 .prompt-input {
-  background: #111;
+  background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
   font-family: inherit;
@@ -48,7 +48,7 @@
 
 .prompt-input:focus {
   outline: none;
-  border-color: #444;
+  border-color: var(--border-soft);
 }
 
 .prompt-input:disabled {
@@ -56,9 +56,9 @@
 }
 
 .ask-btn {
-  background: #1a1a1a;
-  border: 1px solid #444;
-  color: #fff;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-soft);
+  color: var(--signal-active);
   font-family: inherit;
   font-size: 1rem;
   padding: 0.5rem 2rem;
@@ -69,7 +69,7 @@
 }
 
 .ask-btn:hover:not(:disabled) {
-  background: #333;
+  background: var(--border-soft);
 }
 
 .ask-btn:disabled {
@@ -97,9 +97,9 @@
 }
 
 .recent-item {
-  background: #0a0a0a;
+  background: var(--surface);
   border: 1px solid var(--border);
-  color: #888;
+  color: var(--text-dim);
   font-family: inherit;
   font-size: 0.75rem;
   padding: 0.3rem 0.7rem;
@@ -114,6 +114,6 @@
 }
 
 .recent-item:hover:not(:disabled) {
-  border-color: #444;
+  border-color: var(--border-soft);
   color: var(--text);
 }

@@ -7,15 +7,15 @@
 
 .mode-toggle-group {
   display: flex;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   border-radius: 4px;
   overflow: hidden;
 }
 
 .mode-btn {
-  background: #111;
+  background: var(--surface);
   border: none;
-  color: #888;
+  color: var(--text-dim);
   font-family: inherit;
   font-size: 0.8rem;
   padding: 0.3rem 0.8rem;
@@ -24,16 +24,16 @@
 }
 
 .mode-btn:not(:last-child) {
-  border-right: 1px solid #333;
+  border-right: 1px solid var(--border-soft);
 }
 
 .mode-btn.active {
-  background: #222;
-  color: #fff;
+  background: var(--surface-raised);
+  color: var(--signal-active);
 }
 
 .mode-btn:hover:not(:disabled):not(.active) {
-  background: #1a1a1a;
+  background: var(--surface-raised);
 }
 
 .mode-btn:disabled {

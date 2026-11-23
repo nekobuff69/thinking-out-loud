@@ -17,7 +17,7 @@
   overflow-y: auto;
   background: rgba(0, 0, 0, 0.85);
   color: #e0e0e0;
-  border: 1px solid #444;
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
   padding: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -32,7 +32,7 @@
   font-size: 13px;
   margin-bottom: 8px;
   color: #ffd700;
-  border-bottom: 1px solid #444;
+  border-bottom: 1px solid var(--border-soft);
   padding-bottom: 6px;
 }
 
@@ -59,7 +59,7 @@
 
 .debug-model-name {
   font-weight: bold;
-  color: #fff;
+  color: var(--signal-active);
   margin-bottom: 4px;
 }
 
@@ -71,7 +71,7 @@
 }
 
 .debug-row-label {
-  color: #888;
+  color: var(--text-dim);
   flex-shrink: 0;
   min-width: 56px;
 }

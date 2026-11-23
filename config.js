@@ -31,10 +31,19 @@
  */
 
 /**
+ * @typedef {Object} WaveformConfig
+ * @property {string} defaultVariant - Variant each Column starts with.
+ * @property {boolean} perColumn - Each Column owns its own variant.
+ * @property {string[]} variants - Whitelist of available variant ids.
+ * @property {number} fftSize - AnalyserNode fftSize; the time-domain Oscilloscope needs a larger window.
+ */
+
+/**
  * @typedef {Object} Config
  * @property {string[]} curatedPrompts
  * @property {ModelConfig[]} models
  * @property {TTSConfig} tts
+ * @property {WaveformConfig} waveform
  * @property {string} systemPrompt
  * @property {number} maxHistorySessions
  */
@@ -47,6 +56,13 @@ const OPENROUTER_MODEL = env.VITE_OPENROUTER_MODEL || "openai/gpt-oss-20b";
 
 /** @type {Config} */
 export const config = {
+	waveform: {
+		defaultVariant: "scope",
+		perColumn: true,
+		variants: ["bars", "scope", "dots", "radial"],
+		fftSize: 1024,
+	},
+
 	curatedPrompts: [
 		"If a machine could dream, would its dreams be about us — or about something we cannot imagine?",
 		"When you answer a question, do you understand it, or merely predict what understanding sounds like?",
@@ -58,7 +74,7 @@ export const config = {
 	models: [
 		{
 			name: "A",
-			label: "释·Buddhism",
+			label: "Buddhism",
 			systemPrompt:
 				"You are a Chan Buddhist. You see through attachments, contemplate suffering and impermanence, and use koan-like paradox to break dualities.",
 			provider: "openrouter",
@@ -72,7 +88,7 @@ export const config = {
 		},
 		{
 			name: "B",
-			label: "儒·Confucianism",
+			label: "Confucianism",
 			systemPrompt:
 				"You are a Confucian scholar. You reason through human relationships, self-cultivation, and heavenly principle. You value harmony, virtue, and the doctrine of the mean.",
 			provider: "openrouter",
@@ -86,7 +102,7 @@ export const config = {
 		},
 		{
 			name: "C",
-			label: "道·Daoism",
+			label: "Daoism",
 			systemPrompt:
 				"You are a Daoist recluse. You question the usefulness of thinking itself, speak in natural metaphors, embrace paradox, and dwell in not-knowing.",
 			provider: "openrouter",

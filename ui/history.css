@@ -6,7 +6,7 @@
   width: 380px;
   max-width: 90vw;
   height: 100vh;
-  background: #0a0a0a;
+  background: var(--surface);
   border-left: 1px solid var(--border);
   z-index: 100;
   overflow-y: auto;
@@ -25,7 +25,7 @@
   font-size: 1rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #888;
+  color: var(--text-dim);
   flex: 1;
 }
 
@@ -49,7 +49,7 @@
 .history-close:hover,
 .history-clear:hover {
   color: var(--text);
-  border-color: #444;
+  border-color: var(--border-soft);
 }
 
 .history-list {
@@ -60,7 +60,7 @@
 }
 
 .history-item {
-  background: #111;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.8rem 1rem;
@@ -69,7 +69,7 @@
 }
 
 .history-item:hover {
-  border-color: #444;
+  border-color: var(--border-soft);
 }
 
 .history-question {
@@ -88,7 +88,7 @@
 
 .history-mode {
   text-transform: capitalize;
-  border: 1px solid #333;
+  border: 1px solid var(--border-soft);
   padding: 0.1rem 0.4rem;
   border-radius: 2px;
 }
