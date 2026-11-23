@@ -9,6 +9,9 @@ import { config } from "./config.js";
 import { createPromptSelector } from "./ui/prompt-selector.js";
 import { createHistory } from "./ui/history.js";
 import { createOverlayState } from "./ui/overlay-state.js";
+import { createWaveformSelector } from "./audio/waveform-variant-selector.js";
+import { createWaveformPicker } from "./ui/waveform-picker.js";
+import { applyVariants } from "./ui/waveform-apply.js";
 import { createColumn } from "./ui/column.js";
 import { PocketTtsBackend } from "./tts/pocket-tts-backend.js";
 import { AudioGraph } from "./audio/audio-graph.js";
@@ -20,6 +23,11 @@ import "./styles/shell.css";
 
 const store = new SessionStore(config.maxHistorySessions);
 const overlays = createOverlayState();
+const waveformSelector = createWaveformSelector(
+  config.models.length,
+  config.waveform.defaultVariant,
+  config.waveform.variants
+);
 
 // --- DOM lookups ---
 /** @param {string} id @returns {HTMLElement} */
@@ -243,9 +251,76 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-// Wave readout (ticket 76 replaces this with live per-Column names).
-tWave.textContent = config.waveform.defaultVariant.toUpperCase();
+// --- Per-Column Waveform identity ---
+/** @type {Record<string, string>} */
+const NAME_BY_ID = {
+  bars: "MIRRORED BARS",
+  scope: "OSCILLOSCOPE",
+  dots: "DOT MATRIX",
+  radial: "RADIAL VOICEPRINT",
+};
 
-// Escape priority helper for other overlays: picker closes first.
-window.addEventListener("waveform:open", () => openOverlay("picker"));
-window.addEventListener("waveform:close", () => closeOverlay("picker"));
+/** @returns {void} */
+function updateWaveReadout() {
+  tWave.textContent = waveformSelector.getVariants()
+    .map((id) => NAME_BY_ID[id] ?? id.toUpperCase())
+    .join(" / ");
+}
+
+const picker = createWaveformPicker(pickerHost, config.waveform.variants, (columnIndex, variant) => {
+  waveformSelector.setColumnVariant(columnIndex, variant);
+  const column = columns.get(config.models[columnIndex].name);
+  column?.setWaveformVariant(variant);
+  updateWaveReadout();
+  picker.setCurrent(waveformSelector.getVariants());
+});
+
+/** @returns {void} */
+function applyAllVariants() {
+  const ordered = config.models.map((model) => columns.get(model.name));
+  applyVariants(ordered, waveformSelector.getVariants());
+  picker.setCurrent(waveformSelector.getVariants());
+  updateWaveReadout();
+}
+
+// Click a Column's Waveform to open the picker anchored to that Column.
+for (const [name, column] of columns) {
+  const index = config.models.findIndex((model) => model.name === name);
+  const canvas = column.element.querySelector("canvas");
+  canvas?.addEventListener("click", (/** @type {Event} */ event) => {
+    event.stopPropagation();
+    const rect = /** @type {Element} */ (event.currentTarget).getBoundingClientRect();
+    window.dispatchEvent(new CustomEvent("waveform:open", { detail: { index, rect } }));
+  });
+}
+
+/** @param {boolean} reset */
+function shuffleOrReset(reset) {
+  if (reset) waveformSelector.reset();
+  else waveformSelector.shuffle();
+  applyAllVariants();
+}
+
+document.addEventListener("waveform:shuffle", (/** @type {Event} */ event) => {
+  shuffleOrReset(/** @type {CustomEvent} */ (event).detail?.reset === true);
+});
+
+window.addEventListener("waveform:open", (event) => {
+  const detail = /** @type {CustomEvent} */ (event).detail ?? {};
+  openOverlay("picker");
+  picker.setCurrent(waveformSelector.getVariants());
+  if (detail.rect) picker.open(detail.index ?? 0, detail.rect);
+});
+window.addEventListener("waveform:close", () => {
+  picker.close();
+  closeOverlay("picker");
+});
+
+pickerHost.addEventListener("click", (event) => {
+  if (event.target === pickerHost) {
+    picker.close();
+    closeOverlay("picker");
+  }
+});
+
+applyAllVariants();

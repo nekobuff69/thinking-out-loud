@@ -1,0 +1,83 @@
+/* Waveform picker — anchored above the Column that was clicked */
+#waveform-picker.overlay-host { pointer-events: none; }
+#waveform-picker.overlay-host.open { display: block; }
+
+.waveform-picker-panel {
+  position: absolute;
+  bottom: 104px;
+  background: var(--surface);
+  border: 1px solid var(--signal);
+  padding: 14px;
+  pointer-events: auto;
+}
+.waveform-picker-panel[hidden] { display: none; }
+.waveform-picker-panel::after {
+  content: "";
+  position: absolute;
+  left: var(--anchor-x, 50%);
+  bottom: -9px;
+  width: 1px;
+  height: 9px;
+  background: var(--signal);
+}
+.waveform-picker-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--type-label);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--signal-active);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.waveform-picker-head button {
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.waveform-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.waveform-picker-option {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--signal);
+  padding: 7px;
+  text-align: left;
+  font: var(--type-micro) var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.waveform-picker-option:hover { background: var(--sf); }
+.waveform-picker-option.on {
+  border-color: var(--signal-active);
+  background: var(--sf);
+  color: var(--signal-active);
+}
+.waveform-picker-option canvas {
+  width: 100%;
+  height: 34px;
+  display: block;
+  margin: 0 0 7px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.waveform-picker-foot {
+  margin-top: 10px;
+  font-size: var(--type-micro);
+  letter-spacing: 0.1em;
+  opacity: 0.55;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+@media (max-width: 980px) {
+  .waveform-picker-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

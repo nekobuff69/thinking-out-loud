@@ -14,6 +14,7 @@ import "./column.css";
  * @property {(message: string) => void} setError
  * @property {(analyserNode: AnalyserNode, color: string) => void} attachWaveform
  * @property {() => void} stopWaveform
+ * @property {(variant: string) => void} setWaveformVariant
  * @property {(active: boolean) => void} setMuted
  * @property {(active: boolean) => void} setSoloed
  * @property {(fn: () => void) => void} onMuteToggle
@@ -42,7 +43,6 @@ export function createColumn(container, model) {
 	// Header with model label in model's color
 	const header = document.createElement("div");
 	header.className = "column-header";
-	header.style.color = model.color;
 
 	// Display label (falls back to internal name for backward compat)
 	header.appendChild(document.createTextNode(model.label ?? model.name));
@@ -60,13 +60,11 @@ export function createColumn(container, model) {
 	header.appendChild(soloBtn);
 	const reasoningEl = document.createElement("div");
 	reasoningEl.className = "column-reasoning";
-	reasoningEl.style.color = model.color;
 
 	// "New content below" indicator
 	const scrollIndicator = document.createElement("div");
 	scrollIndicator.className = "scroll-indicator";
 	scrollIndicator.textContent = "↓ new content";
-	scrollIndicator.style.color = model.color;
 	scrollIndicator.style.display = "none";
 
 	const waveform = document.createElement("canvas");
@@ -80,6 +78,8 @@ export function createColumn(container, model) {
 
 	/** @type {ReturnType<typeof import("../audio/waveform.js").createWaveform> | null} */
 	let waveformController = null;
+	/** @type {string} */
+	let currentVariant = "scope";
 
 	reasoningEl.addEventListener("scroll", () => {
 		const { scrollTop, scrollHeight, clientHeight } = reasoningEl;
@@ -336,7 +336,21 @@ export function createColumn(container, model) {
 	 */
 	function attachWaveform(analyserNode, color) {
 		stopWaveform();
-		waveformController = createWaveform(waveform, analyserNode, color);
+		waveformController = createWaveform(waveform, analyserNode, color, {
+			variant: currentVariant,
+			fftSize: 1024,
+		});
+	}
+
+	/**
+	 * Hot-swap the animation in place. Never rebuilds the Channel or interrupts
+	 * playback, and never emits a notification.
+	 * @param {string} variant
+	 * @returns {void}
+	 */
+	function setWaveformVariant(variant) {
+		currentVariant = variant;
+		waveformController?.setVariant(variant);
 	}
 
 	/**
@@ -435,6 +449,7 @@ export function createColumn(container, model) {
 		setError,
 		attachWaveform,
 		stopWaveform,
+		setWaveformVariant,
 		startKaraoke,
 		stopKaraoke,
 		setMuted,
