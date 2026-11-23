@@ -17,6 +17,7 @@ describe("ChannelPipeline", () => {
       audioGraph = defaultAudioGraph(),
       eventBus,
       useTextChunker = true,
+      onIdle = () => {},
     } = opts;
 
     const mockColumn = {
@@ -34,6 +35,7 @@ describe("ChannelPipeline", () => {
       ttsEngine,
       llmProvider,
       audioGraph,
+      onIdle,
       eventBus,
     });
 
@@ -967,5 +969,44 @@ describe("ChannelPipeline", () => {
     assert.ok(startCount >= 2, "new tokens after resume should trigger startStream");
 
     pipeline.softStop();
+  });
+
+  // ------------------------------------------------------------------
+  // Idle signalling (completion tracking for Orchestrator)
+  // ------------------------------------------------------------------
+
+  it("signals idle exactly once when a live stream produces no TTS text", async () => {
+    let idleCount = 0;
+    const { pipeline } = makePipeline({ onIdle: () => { idleCount++; } });
+
+    await pipeline.startStream("system prompt", "question");
+    await new Promise((r) => setTimeout(r, 10));
+
+    assert.strictEqual(idleCount, 1, "empty stream should still signal idle once");
+    assert.strictEqual(pipeline.isActive, false);
+  });
+
+  it("does not signal idle while paused — a resumed pipeline speaks before completing", async () => {
+    let idleCount = 0;
+    const { pipeline } = makePipeline({ onIdle: () => { idleCount++; }, useTextChunker: false });
+
+    pipeline.pause();
+    await pipeline.startStream("system prompt", "question");
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(idleCount, 0, "paused pipeline must not complete before its turn");
+
+    pipeline.resume(); // no reasoning text — nothing to play, so idle is released here
+    assert.strictEqual(idleCount, 1);
+  });
+
+  it("resets isActive after replay playback finishes", async () => {
+    let idleCount = 0;
+    const { pipeline } = makePipeline({ onIdle: () => { idleCount++; } });
+
+    await pipeline.drainText("Some reasoning. More reasoning.");
+    await new Promise((r) => setTimeout(r, 10));
+
+    assert.strictEqual(idleCount, 1, "replay should signal idle once");
+    assert.strictEqual(pipeline.isActive, false, "replay must clear #streamActive after text feed");
   });
 });

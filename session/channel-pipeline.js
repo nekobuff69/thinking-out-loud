@@ -54,6 +54,8 @@ export class ChannelPipeline {
 	#streamActive = false;
 	/** @type {boolean} */
 	#ttsActive = false;
+	/** @type {boolean} Guards against duplicate idle signals per run */
+	#idleSignaled = false;
 	/** @type {boolean} */
 	#contentHit = false;
 	/** @type {string} */
@@ -173,6 +175,7 @@ export class ChannelPipeline {
 	 */
 	startStream(systemPrompt, question, signal) {
 		this.#streamActive = true;
+		this.#idleSignaled = false;
 		this.#contentHit = false;
 		this.#isCapped = false;
 		this.#wordCount = 0;
@@ -331,13 +334,10 @@ export class ChannelPipeline {
 	#sendNextSentence() {
 		if (this.#currentSentenceActive) return;
 		if (this.#sentenceQueue.length === 0) {
-			// Queue empty. If LLM stream is done and TTS is still active, end audio.
-			if (!this.#streamActive && this.#ttsActive) {
-				this.#audioStream?.end();
-				this.#ttsActive = false;
-				this.#emitProgress("done");
-				this.#onIdle?.();
-			}
+			// Finalize when the source is done, even if no TTS was ever opened
+			// (empty reasoning). A paused pipeline is not done yet — it will be
+			// resumed and must signal idle after its actual playback.
+			if (!this.#streamActive && !this.#paused) this.#signalIdle();
 			return;
 		}
 
@@ -421,6 +421,22 @@ export class ChannelPipeline {
 	}
 
 	/**
+	 * Signal that this pipeline has nothing left to play. Called at most once
+	 * per run so Orchestrator can count completed pipelines reliably.
+	 * @returns {void}
+	 */
+	#signalIdle() {
+		if (this.#idleSignaled) return;
+		this.#idleSignaled = true;
+		if (this.#ttsActive) {
+			this.#audioStream?.end();
+			this.#ttsActive = false;
+		}
+		this.#emitProgress("done");
+		this.#onIdle?.();
+	}
+
+	/**
 	 * Flush remaining buffer and prepare for stream close.
 	 * TextChunker path: flushes any pending text (triggers onFlush → queue).
 	 * Non-chunker path: pushes accumulated live buffer to sentence queue.
@@ -485,6 +501,7 @@ export class ChannelPipeline {
 	 */
 	async drainText(text) {
 		this.#streamActive = true;
+		this.#idleSignaled = false;
 		this.#reasoningText = text;
 		this.#isCapped = false;
 		this.#wordCount = 0;
@@ -507,7 +524,11 @@ export class ChannelPipeline {
 		}
 
 		this.#synthesizeReplay();
+		// Replay text feeding is not an LLM stream — clear the flag so isActive
+		// reflects only playback, and signal idle immediately when nothing plays.
+		this.#streamActive = false;
 		this.#emitProgress("finished");
+		if (!this.#ttsActive) this.#signalIdle();
 	}
 
 	/**
@@ -543,9 +564,7 @@ export class ChannelPipeline {
 			this.#ttsEngine.startStream(fullText, voice, onChunk, {
 				onDone: () => {
 					this.#replaySynthesisActive = false;
-					this.#ttsActive = false;
-					this.#emitProgress("done");
-					this.#onIdle?.();
+					this.#signalIdle();
 				},
 				onError: (msg) => {
 					this.#replaySynthesisActive = false;
@@ -637,6 +656,9 @@ export class ChannelPipeline {
 				this.#sentenceQueue.push(this.#reasoningText);
 				this.#sendNextSentence();
 			}
+		} else {
+			// Nothing will play on this turn — release completion tracking.
+			this.#signalIdle();
 		}
 	}
 

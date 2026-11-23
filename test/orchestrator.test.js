@@ -472,4 +472,140 @@ describe("mute and solo", () => {
     assert.strictEqual(columnMocks.get("modelA").setMuted.mock.calls.at(-1).arguments[0], false);
     mock.reset();
   });
+
+  it("saves a completed session exactly once, after every pipeline goes idle", async () => {
+    const sse =
+      'data: {"choices":[{"delta":{"reasoning_content":"Alpha. Beta. Gamma."}}]}\n\n' +
+      "data: [DONE]\n\n";
+    mock.method(globalThis, "fetch", async (url) => {
+      if (String(url).includes("/models")) {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+      }
+      return new Response(sse, { status: 200 });
+    });
+
+    /** @type {Set<string>} */
+    const ttsStarted = new Set();
+    /** @type {number[]} */
+    const ttsStartedAtSave = [];
+    /** @type {string[]} */
+    const states = [];
+    const models = ["modelA", "modelB", "modelC"].map((name) => ({
+      name,
+      url: "https://openrouter.ai/api/v1",
+      model: "test",
+      voice: "eve",
+      color: "#fff",
+      pan: 0,
+      provider: "test",
+    }));
+
+    const orchestrator = new Orchestrator({
+      models,
+      systemPrompt: "test",
+      ttsConfig: { maxTokens: 200, useTextChunker: false, randomizePlayback: false },
+      audioGraph: {
+        clearChannels: () => {},
+        createChannel: () => ({
+          analyser: {},
+          gain: {},
+          openStream: () => ({ feed: () => {}, end: () => {}, stop: () => {} }),
+          playStream: () => ({ stop: () => {} }),
+          stopAll: () => {},
+        }),
+        getContext: () => undefined,
+      },
+      columns: new Map(models.map((m) => [m.name, {
+        appendToken: () => {}, clear: () => {}, setError: () => {},
+        attachWaveform: () => {}, stopWaveform: () => {},
+      }])),
+      ttsEngines: new Map(models.map((m) => [m.name, {
+        load: async () => {},
+        startStream(_text, _voice, _onChunk, { onDone }) {
+          ttsStarted.add(m.name);
+          setTimeout(onDone, 0); // TTS finishes after all LLM streams
+        },
+        stop: () => {},
+        destroy: () => {},
+      }])),
+      storage: {
+        save() { ttsStartedAtSave.push(ttsStarted.size); },
+        saveQuestion() {},
+      },
+    });
+    orchestrator.onStateChange((s) => states.push(s));
+
+    await orchestrator.start("why?");
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.strictEqual(ttsStartedAtSave.length, 1, "storage.save should be called exactly once");
+    assert.deepStrictEqual(ttsStartedAtSave, [3], "save must happen after all 3 pipelines spoke");
+    assert.strictEqual(states.filter((s) => s === "Done").length, 1);
+    mock.reset();
+  });
+
+  it("replay saves exactly once after replay playback finishes", async () => {
+    mock.method(globalThis, "fetch", async (url) => {
+      if (String(url).includes("/models")) {
+        return { ok: true, status: 200, json: async () => ({ data: [] }) };
+      }
+      throw new Error("replay must not call the LLM endpoint");
+    });
+
+    let saveCount = 0;
+    const model = {
+      name: "modelA",
+      url: "https://openrouter.ai/api/v1",
+      model: "test",
+      voice: "eve",
+      color: "#fff",
+      pan: 0,
+      provider: "test",
+    };
+    const orchestrator = new Orchestrator({
+      models: [model],
+      systemPrompt: "test",
+      ttsConfig: { maxTokens: 200, useTextChunker: false, randomizePlayback: false },
+      audioGraph: {
+        clearChannels: () => {},
+        createChannel: () => ({
+          analyser: {},
+          gain: {},
+          openStream: () => ({ feed: () => {}, end: () => {}, stop: () => {} }),
+          playStream: (streamFn) => {
+            streamFn(() => {}); // real AudioGraph invokes streamFn synchronously
+            return { stop: () => {} };
+          },
+          stopAll: () => {},
+        }),
+        getContext: () => undefined,
+      },
+      columns: new Map([[model.name, {
+        appendToken: () => {}, clear: () => {}, setError: () => {},
+        attachWaveform: () => {}, stopWaveform: () => {},
+      }]]),
+      ttsEngines: new Map([[model.name, {
+        load: async () => {},
+        startStream(_text, _voice, _onChunk, { onDone }) { setTimeout(onDone, 0); },
+        stop: () => {},
+        destroy: () => {},
+      }]]),
+      storage: {
+        save() { saveCount++; },
+        saveQuestion() {},
+      },
+    });
+
+    await orchestrator.replay({
+      id: "old-session",
+      timestamp: new Date().toISOString(),
+      question: "why?",
+      mode: "monologue",
+      models: [{ ...model, displayName: "modelA", reasoningText: "Some reasoning. More reasoning." }],
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.strictEqual(saveCount, 1, "replay should save exactly once");
+    mock.reset();
+  });
 });

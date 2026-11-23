@@ -52,6 +52,10 @@ export class Orchestrator {
 	#monologueIndex = 0;
 	/** @type {boolean} */
 	#allStreamsDone = false;
+	/** @type {Set<string>} Pipelines that have signalled idle in the current run */
+	#idlePipelines = new Set();
+	/** @type {boolean} One-shot guard: a run is saved at most once */
+	#sessionFinalized = false;
 	/** @type {SessionStore} */
 	#storage;
 	/** @type {SessionData | null} */
@@ -129,6 +133,8 @@ export class Orchestrator {
 		this.#questionText = question;
 		this.#monologueIndex = 0;
 		this.#allStreamsDone = false;
+		this.#idlePipelines.clear();
+		this.#sessionFinalized = false;
 		this.#audioGraph.clearChannels();
 		this.#setState("Loading");
 
@@ -216,7 +222,7 @@ export class Orchestrator {
 		if ([...this.#activeSessions.values()].some((p) => p.isActive)) {
 			this.#setState("Speaking");
 		} else {
-			this.#finishSession();
+			this.#checkAllDone();
 		}
 	}
 
@@ -229,6 +235,8 @@ export class Orchestrator {
 		this.#questionText = sessionData.question;
 		this.#monologueIndex = 0;
 		this.#allStreamsDone = false;
+		this.#idlePipelines.clear();
+		this.#sessionFinalized = false;
 		this.#audioGraph.clearChannels();
 		this.#setState("Loading");
 
@@ -288,7 +296,7 @@ export class Orchestrator {
 		if ([...this.#activeSessions.values()].some((p) => p.isActive)) {
 			this.#setState("Speaking");
 		} else {
-			this.#finishSession();
+			this.#checkAllDone();
 		}
 	}
 
@@ -334,6 +342,7 @@ export class Orchestrator {
 				audioGraph: this.#audioGraph,
 				eventBus: this.#eventBus,
 				onIdle: () => {
+					this.#idlePipelines.add(model.name);
 					this.#advanceMonologue();
 					this.#checkAllDone();
 				},
@@ -399,19 +408,16 @@ export class Orchestrator {
 	}
 
 	#checkAllDone() {
-		if (this.#state === "Done") return;
-
-		// Only consider done when the last model's pipeline finishes
-		const sessionKeys = [...this.#activeSessions.keys()];
-		const lastModel = sessionKeys[sessionKeys.length - 1];
-		const lastPipeline = this.#activeSessions.get(lastModel);
-		if (this.#allStreamsDone && lastPipeline && !lastPipeline.isActive) {
-			this.#finishSession();
-		}
+		if (this.#sessionFinalized || !this.#allStreamsDone) return;
+		// A paused pipeline has isActive === false before it ever speaks, so
+		// completion must be tracked via explicit idle signals, not isActive.
+		if (this.#idlePipelines.size < this.#activeSessions.size) return;
+		this.#finishSession();
 	}
 
 	#finishSession() {
-		if (!this.#sessionData) return;
+		if (!this.#sessionData || this.#sessionFinalized) return;
+		this.#sessionFinalized = true;
 		// Update stored reasoning text from pipeline state
 		for (const [name, pipeline] of this.#activeSessions) {
 			const modelData = this.#sessionData.models.find((m) => m.name === name);
@@ -456,6 +462,8 @@ export class Orchestrator {
 		for (const pipeline of this.#activeSessions.values()) {
 			pipeline.softStop();
 		}
+		// An aborted run is never saved, even if late idle callbacks arrive.
+		this.#sessionFinalized = true;
 		this.#setState("Done");
 		this.#state = "Idle";
 	}
