@@ -40,24 +40,35 @@ export function createColumn(container, model) {
 	const col = document.createElement("div");
 	col.className = "column";
 
-	// Header with model label in model's color
+	// Header: channel number + pan position, the Label, and 17x17 M/S squares.
 	const header = document.createElement("div");
 	header.className = "column-header";
 
-	// Display label (falls back to internal name for backward compat)
-	header.appendChild(document.createTextNode(model.label ?? model.name));
+	const channelNo = container.children.length + 1;
+	const cid = document.createElement("span");
+	cid.className = "column-cid";
+	const pan = model.pan < 0 ? "L" : model.pan > 0 ? "R" : "C";
+	cid.textContent = "CH 0" + channelNo + " / " + pan;
 
+	const nameEl = document.createElement("span");
+	nameEl.className = "column-name";
+	nameEl.textContent = model.label ?? model.name;
+
+	const ms = document.createElement("span");
+	ms.className = "column-ms";
 	const muteBtn = document.createElement("button");
 	muteBtn.className = "mute-btn";
 	muteBtn.textContent = "M";
-	muteBtn.style.marginLeft = "12px";
 	muteBtn.setAttribute("aria-label", "Mute " + (model.label ?? model.name));
 	const soloBtn = document.createElement("button");
 	soloBtn.className = "solo-btn";
 	soloBtn.textContent = "S";
 	soloBtn.setAttribute("aria-label", "Solo " + (model.label ?? model.name));
-	header.appendChild(muteBtn);
-	header.appendChild(soloBtn);
+	ms.appendChild(muteBtn);
+	ms.appendChild(soloBtn);
+	header.appendChild(cid);
+	header.appendChild(nameEl);
+	header.appendChild(ms);
 	const reasoningEl = document.createElement("div");
 	reasoningEl.className = "column-reasoning";
 
@@ -67,13 +78,16 @@ export function createColumn(container, model) {
 	scrollIndicator.textContent = "↓ new content";
 	scrollIndicator.style.display = "none";
 
+	const waveformBox = document.createElement("div");
+	waveformBox.className = "column-waveform";
 	const waveform = document.createElement("canvas");
-	waveform.className = "column-waveform";
+	waveform.className = "column-waveform-canvas";
+	waveformBox.appendChild(waveform);
 
 	col.appendChild(header);
 	col.appendChild(reasoningEl);
 	col.appendChild(scrollIndicator);
-	col.appendChild(waveform);
+	col.appendChild(waveformBox);
 	container.appendChild(col);
 
 	/** @type {ReturnType<typeof import("../audio/waveform.js").createWaveform> | null} */

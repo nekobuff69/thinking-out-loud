@@ -10,7 +10,7 @@ import { createPromptSelector } from "./ui/prompt-selector.js";
 import { createHistory } from "./ui/history.js";
 import { createOverlayState } from "./ui/overlay-state.js";
 import { createWaveformSelector } from "./audio/waveform-variant-selector.js";
-import { WAVEFORM_NAMES } from "./audio/waveform-variants.js";
+import { WAVEFORM_SHORT_NAMES } from "./audio/waveform-variants.js";
 import { createWaveformPicker } from "./ui/waveform-picker.js";
 import { applyVariants } from "./ui/waveform-apply.js";
 import { createColumn } from "./ui/column.js";
@@ -182,6 +182,7 @@ orchestrator.onStateChange((state) => {
   document.body.classList.toggle("session-running", running);
   stopBtn.style.display = stoppable ? "inline-block" : "none";
   promptSelector.setEnabled(!running);
+  tMessage.classList.toggle("error", state.startsWith("Error"));
 
   if (state.startsWith("Error")) {
     tMessage.textContent = state;
@@ -278,7 +279,7 @@ document.addEventListener("keydown", (event) => {
 /** @returns {void} */
 function updateWaveReadout() {
   tWave.textContent = waveformSelector.getVariants()
-    .map((id) => (WAVEFORM_NAMES[id] ?? id).toUpperCase())
+    .map((id) => (WAVEFORM_SHORT_NAMES[id] ?? id).toUpperCase())
     .join(" / ");
 }
 
@@ -301,8 +302,8 @@ function applyAllVariants() {
 // Click a Column's Waveform to open the picker anchored to that Column.
 for (const [name, column] of columns) {
   const index = config.models.findIndex((model) => model.name === name);
-  const canvas = column.element.querySelector("canvas");
-  canvas?.addEventListener("click", (/** @type {Event} */ event) => {
+  const wavePanel = column.element.querySelector(".column-waveform");
+  wavePanel?.addEventListener("click", (/** @type {Event} */ event) => {
     event.stopPropagation();
     const rect = /** @type {Element} */ (event.currentTarget).getBoundingClientRect();
     window.dispatchEvent(new CustomEvent("waveform:open", { detail: { index, rect } }));

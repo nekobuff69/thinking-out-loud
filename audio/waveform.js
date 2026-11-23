@@ -1,26 +1,33 @@
 import { normaliseVariant } from "./waveform-variants.js";
+import { WAVEFORM_PALETTE } from "../styles/design-tokens.js";
 
 /**
  * Renders a live Waveform on a canvas element.
  *
- * Four named animations share one AnalyserNode and can be hot-swapped in place:
- *   bars   — mirrored log-scaled frequency bars with peak hold (legacy)
- *   scope  — true time-domain Oscilloscope trace
- *   dots   — LED / VFD dot matrix driven by frequency energy
- *   radial — closed ring whose radius tracks frequency energy
+ * Four named animations share one AnalyserNode and can be hot-swapped in place.
+ * Drawing geometry and colours are transcribed from the B-2 visual source of
+ * truth (`docs/ui-refactor-b2-detail.html`, `draw()`): a dim horizontal
+ * baseline, 24 mirrored bars, a 12/32 oscilloscope grid, a 40x7 VFD matrix
+ * and a ring voiceprint, all in the B-2 duotone (fg / ac / dim).
  *
  * Every branch falls back to a gentle Idle waveform while its Channel is
  * silent. Under a reduced-motion preference a single static frame is drawn.
  *
  * @param {HTMLCanvasElement} canvas
  * @param {AnalyserNode} analyser
- * @param {string} color
- * @param {{ variant?: string, fftSize?: number, reducedMotion?: boolean }} [options]
+ * @param {string} color - Legacy per-Model colour. Retained for API
+ *   compatibility but deliberately ignored: B-2 uses one duotone for all
+ *   Columns, never three neon hues.
+ * @param {{ variant?: string, fftSize?: number, reducedMotion?: boolean, palette?: import("../styles/design-tokens.js").WaveformPalette }} [options]
  * @returns {{ stop: () => void, setVariant: (variant: string) => void, getVariant: () => string }}
  */
 export function createWaveform(canvas, analyser, color, options = {}) {
+  void color;
   const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
   if (!ctx) throw new Error("Canvas 2D context not supported");
+
+  const palette = options.palette ?? WAVEFORM_PALETTE;
+  const { fg, ac, dim } = palette;
 
   const reducedMotion = options.reducedMotion ??
     (typeof window !== "undefined" && typeof window.matchMedia === "function" &&
@@ -87,65 +94,62 @@ export function createWaveform(canvas, analyser, color, options = {}) {
   }
 
   /** @param {number} w @param {number} h */
+  function baseline(w, h) {
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = dim;
+    ctx.beginPath();
+    ctx.moveTo(0, h / 2);
+    ctx.lineTo(w, h / 2);
+    ctx.stroke();
+  }
+
+  /** @param {number} w @param {number} h */
   function drawIdleBars(w, h) {
-    const bw = w / (barCount * 2);
-    const gap = bw * 0.15;
-    for (let i = 0; i < barCount; i += 1) {
-      const phase = idlePhase + (i / barCount) * Math.PI * 1.5;
-      const n = 0.08 + 0.06 * Math.sin(phase);
-      const barH = n * h;
-      const x = i * bw + gap;
-      ctx.fillStyle = color;
-      ctx.globalAlpha = 0.2 + n * 0.5;
-      ctx.fillRect(x, (h - barH) / 2, bw - gap * 2, Math.max(barH, 1));
-      ctx.fillRect(w - x - bw + gap, (h - barH) / 2, bw - gap * 2, Math.max(barH, 1));
+    const n = 24;
+    const bw = w / (n * 2);
+    for (let i = 0; i < n; i += 1) {
+      const phase = idlePhase + (i / n) * Math.PI * 1.5;
+      const bh = Math.max(1, (0.04 + 0.05 * Math.sin(phase)) * h * 0.86);
+      ctx.fillStyle = fg;
+      ctx.globalAlpha = 0.28 + 0.12 * Math.sin(phase);
+      ctx.fillRect(i * bw + 1, h - bh, bw - 2, bh);
+      ctx.fillRect(w - (i + 1) * bw + 1, h - bh, bw - 2, bh);
     }
     ctx.globalAlpha = 1;
   }
 
   /** @param {number} w @param {number} h @param {Float32Array} heights */
   function drawBars(w, h, heights) {
-    const bw = w / (barCount * 2);
-    const gap = bw * 0.15;
-    for (let i = 0; i < barCount; i += 1) {
-      if (heights[i] > peaks[i]) peaks[i] = heights[i];
-      else peaks[i] *= 0.92;
-      const barH = Math.max(1, heights[i] * h * 0.9);
-      const peakH = peaks[i] * h * 0.9;
-      const x = i * bw + gap;
-      const mx = w - x - bw;
-      ctx.fillStyle = color;
-      ctx.globalAlpha = 0.5 + heights[i] * 0.5;
-      ctx.fillRect(x, h - barH, bw - gap * 2, barH);
-      ctx.fillRect(mx, h - barH, bw - gap * 2, barH);
-      if (peakH > 1) {
-        ctx.globalAlpha = 1;
-        ctx.fillRect(x, h - peakH - 1, bw - gap * 2, 2);
-        ctx.fillRect(mx, h - peakH - 1, bw - gap * 2, 2);
-      }
+    const n = 24;
+    const bw = w / (n * 2);
+    for (let i = 0; i < n; i += 1) {
+      const value = heights[Math.round((i / n) * 47)] ?? 0;
+      const bh = Math.max(1, value * h * 0.86);
+      ctx.fillStyle = fg;
+      ctx.globalAlpha = 0.55 + (heights[i % 48] ?? 0) * 0.45;
+      ctx.fillRect(i * bw + 1, h - bh, bw - 2, bh);
+      ctx.fillRect(w - (i + 1) * bw + 1, h - bh, bw - 2, bh);
     }
     ctx.globalAlpha = 1;
   }
 
-  /** @param {number} w @param {number} h @param {number} step */
-  function grid(w, h, step) {
-    ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.16;
+  /** @param {number} w @param {number} h */
+  function scopeGrid(w, h) {
+    ctx.strokeStyle = dim;
     ctx.lineWidth = 0.5;
-    for (let x = 0; x < w; x += step) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-    }
-    for (let y = 0; y < h; y += step) {
+    for (let y = 12; y < h; y += 12) {
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
     }
-    ctx.globalAlpha = 1;
+    for (let x = 0; x < w; x += 32) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+    }
   }
 
   /** @param {number} w @param {number} h @param {Uint8Array} time @param {boolean} silent */
   function drawScope(w, h, time, silent) {
-    grid(w, h, 28);
+    scopeGrid(w, h);
     analyser.getByteTimeDomainData(/** @type {Uint8Array<ArrayBuffer>} */ (time));
-    ctx.strokeStyle = color;
+    ctx.strokeStyle = fg;
     ctx.lineWidth = 1.3;
     ctx.globalAlpha = 1;
     ctx.beginPath();
@@ -168,11 +172,11 @@ export function createWaveform(canvas, analyser, color, options = {}) {
     for (let c = 0; c < cols; c += 1) {
       const level = silent
         ? 1 + Math.round(Math.sin(idlePhase + c * 0.2))
-        : Math.round(heights[Math.round((c / cols) * (barCount - 1))] * rows);
+        : Math.round((heights[Math.round((c / cols) * 47)] ?? 0) * rows);
       for (let r = 0; r < rows; r += 1) {
         const lit = r >= rows - level;
-        ctx.globalAlpha = lit ? 0.9 : 0.22;
-        ctx.fillStyle = color;
+        ctx.fillStyle = lit ? ac : dim;
+        ctx.globalAlpha = lit ? 0.9 : 0.35;
         ctx.fillRect(c * gx + gx * 0.28, r * gy + gy * 0.22, gx * 0.44, gy * 0.5);
       }
     }
@@ -185,11 +189,11 @@ export function createWaveform(canvas, analyser, color, options = {}) {
     const cy = h / 2;
     const base = Math.min(w, h) * 0.24;
     const span = Math.min(w, h) * 0.24;
-    ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.2;
+    ctx.strokeStyle = dim;
     ctx.lineWidth = 0.6;
-    ctx.beginPath(); ctx.arc(cx, cy, base, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, base, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = fg;
     ctx.lineWidth = 1.2;
     ctx.beginPath();
     const steps = 96;
@@ -197,7 +201,7 @@ export function createWaveform(canvas, analyser, color, options = {}) {
       const a = (i / steps) * Math.PI * 2;
       const value = silent
         ? 0.06 + 0.04 * Math.sin(idlePhase + a * 3)
-        : heights[i % barCount];
+        : (heights[i % barCount] ?? 0);
       const r = base + value * span;
       const x = cx + Math.cos(a) * r;
       const y = cy + Math.sin(a) * r;
@@ -216,6 +220,7 @@ export function createWaveform(canvas, analyser, color, options = {}) {
     const silent = energy < 0.5;
     const heights = barHeights(freq);
     ctx.clearRect(0, 0, w, h);
+    baseline(w, h);
 
     if (silent && variant === "bars") drawIdleBars(w, h);
     else if (variant === "bars") drawBars(w, h, heights);

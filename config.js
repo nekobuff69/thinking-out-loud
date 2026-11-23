@@ -36,6 +36,7 @@
  * @property {boolean} perColumn - Each Column owns its own variant.
  * @property {string[]} variants - Whitelist of available variant ids.
  * @property {number} fftSize - AnalyserNode fftSize; the time-domain Oscilloscope needs a larger window.
+ * @property {import("./styles/design-tokens.js").WaveformPalette} palette - B-2 duotone canvas colours.
  */
 
 /**
@@ -50,6 +51,7 @@
 
 // OpenRouter credentials come from .env (Vite injects VITE_* vars at serve/build time).
 // Never hardcode the key here — see .env / .gitignore.
+import { FG, WAVEFORM_PALETTE } from "./styles/design-tokens.js";
 const env = /** @type {any} */ (import.meta.env ?? {});
 const OPENROUTER_API_KEY = env.VITE_OPENROUTER_API_KEY ?? "";
 const OPENROUTER_MODEL = env.VITE_OPENROUTER_MODEL || "openai/gpt-oss-20b";
@@ -61,6 +63,7 @@ export const config = {
 		perColumn: true,
 		variants: ["bars", "scope", "dots", "radial"],
 		fftSize: 1024,
+		palette: WAVEFORM_PALETTE,
 	},
 
 	curatedPrompts: [
@@ -82,7 +85,7 @@ export const config = {
 			model: OPENROUTER_MODEL,
 			apiKey: OPENROUTER_API_KEY,
 			voice: "user_clone",
-			color: "#00ff88",
+			color: FG,
 			pan: -0.5,
 			reasoningFormat: "separate",
 		},
@@ -96,7 +99,7 @@ export const config = {
 			model: OPENROUTER_MODEL,
 			apiKey: OPENROUTER_API_KEY,
 			voice: "eve",
-			color: "#ff6644",
+			color: FG,
 			pan: 0.0,
 			reasoningFormat: "separate",
 		},
@@ -110,7 +113,7 @@ export const config = {
 			model: OPENROUTER_MODEL,
 			apiKey: OPENROUTER_API_KEY,
 			voice: "jane",
-			color: "#44aaff",
+			color: FG,
 			pan: 0.5,
 			reasoningFormat: "separate",
 		},

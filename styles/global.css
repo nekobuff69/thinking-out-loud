@@ -1,44 +1,59 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 /*
- * B-2 duotone design tokens. Every UI colour and type size comes from here;
- * component stylesheets must not hardcode a hex value.
+ * B-2 duotone design tokens. Values are transcribed verbatim from the visual
+ * source of truth `docs/ui-refactor-b2-detail.html` (.screen block). The JS
+ * mirror lives in `styles/design-tokens.js`; `test/design-tokens.test.js`
+ * enforces that both stay in sync.
  */
 :root {
   --bg: #080b08;
   --surface: #0b100b;
-  --surface-raised: #111611;
-  --signal: #b6ff1f;
-  --signal-active: #d6ff6b;
-  --text: #b6ff1f;
-  --text-dim: rgba(182, 255, 31, 0.55);
-  --text-faint: rgba(182, 255, 31, 0.34);
-  --border: rgba(182, 255, 31, 0.5);
-  --border-soft: rgba(182, 255, 31, 0.25);
-  --sf: rgba(182, 255, 31, 0.08);
-  --danger: #e08a5b;
-  --danger-surface: rgba(224, 138, 91, 0.12);
+  --input-bg: #060906;
+  --fg: #b6ff1f;
+  --ac: #d6ff6b;
 
-  --font-mono: "Courier New", Courier, monospace;
+  --ln: rgba(182,255,31,.5);
+  --sf: rgba(182,255,31,.08);
+  --dim: rgba(182,255,31,.28);
+  --ln-soft: rgba(182,255,31,.25);
+  --text-muted: rgba(182,255,31,.55);
+  --frame-glow: 0 0 0 5px rgba(182,255,31,.06);
+
+  --font-mono: "Courier New",ui-monospace,Consolas,monospace;
   --type-micro: 9px;
   --type-label: 10px;
-  --type-body: 11px;
-  --type-lead: 13px;
+  --type-base: 11px;
   --type-title: 20px;
 
-  --track-micro: 0.14em;
-  --track-label: 0.1em;
+  --track-micro: .14em;
+  --track-label: .1em;
+
+  /* Legacy aliases — keep until no component references them. */
+  --signal: var(--fg);
+  --signal-active: var(--ac);
+  --text: var(--fg);
+  --text-dim: var(--text-muted);
+  --text-faint: rgba(182,255,31,.34);
+  --border: var(--ln);
+  --border-soft: var(--ln-soft);
+  --surface-raised: #111611;
+  --danger: #e08a5b;
+  --danger-surface: rgba(224,138,91,.12);
+  --type-body: var(--type-base);
+  --type-lead: 13px;
 }
 
 body {
   background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono);
+  color: var(--fg);
+  font: 11px "Courier New",ui-monospace,Consolas,monospace;
   min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 0.4; }
+  0%, 100% { opacity: .4; }
   50% { opacity: 1; }
 }
 

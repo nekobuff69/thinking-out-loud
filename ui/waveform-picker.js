@@ -4,6 +4,7 @@
  * variant codes, no labels on the Waveform panel itself.
  */
 import { WAVEFORM_NAMES } from "../audio/waveform-variants.js";
+import { WAVEFORM_PALETTE } from "../styles/design-tokens.js";
 import "./waveform-picker.css";
 
 /**
@@ -78,19 +79,34 @@ export function createWaveformPicker(host, variantIds, onSelect) {
     panel.hidden = true;
   }
 
+  const { fg, ac, dim } = WAVEFORM_PALETTE;
+
   /** @param {CanvasRenderingContext2D} ctx @param {number} w @param {number} h @param {string} id @param {number} t */
   function preview(ctx, w, h, id, t) {
     ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = "#b6ff1f";
-    ctx.fillStyle = "#b6ff1f";
-    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = dim;
+    ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+
     if (id === "bars") {
+      ctx.fillStyle = fg;
       for (let i = 0; i < 12; i += 1) {
         const n = 0.3 + 0.7 * Math.abs(Math.sin(t + i * 0.5));
+        ctx.globalAlpha = 0.55 + n * 0.45;
         ctx.fillRect(i * (w / 12) + 1, h - n * h, w / 12 - 2, n * h);
       }
     } else if (id === "scope") {
-      ctx.lineWidth = 1.1;
+      ctx.strokeStyle = dim;
+      ctx.lineWidth = 0.5;
+      for (let y = 12; y < h; y += 12) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+      for (let x = 0; x < w; x += 32) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      }
+      ctx.strokeStyle = fg;
+      ctx.lineWidth = 1.3;
       ctx.beginPath();
       for (let x = 0; x <= w; x += 2) {
         const y = h / 2 + Math.sin(x * 0.16 + t) * h * 0.3;
@@ -102,12 +118,19 @@ export function createWaveformPicker(host, variantIds, onSelect) {
       for (let c = 0; c < 16; c += 1) {
         const level = 1 + Math.round(3 * Math.abs(Math.sin(t + c * 0.4)));
         for (let r = 0; r < 5; r += 1) {
-          ctx.globalAlpha = r >= 5 - level ? 0.9 : 0.2;
+          const lit = r >= 5 - level;
+          ctx.fillStyle = lit ? ac : dim;
+          ctx.globalAlpha = lit ? 0.9 : 0.35;
           ctx.fillRect(c * (w / 16) + 1, r * (h / 5) + 1, w / 16 - 2, h / 5 - 2);
         }
       }
     } else {
-      ctx.lineWidth = 1.1;
+      const base = Math.min(w, h) * 0.28;
+      ctx.strokeStyle = dim;
+      ctx.lineWidth = 0.6;
+      ctx.beginPath(); ctx.arc(w / 2, h / 2, base, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = fg;
+      ctx.lineWidth = 1.2;
       ctx.beginPath();
       for (let i = 0; i <= 48; i += 1) {
         const a = (i / 48) * Math.PI * 2;

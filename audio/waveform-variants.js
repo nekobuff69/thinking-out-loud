@@ -23,3 +23,12 @@ export const WAVEFORM_NAMES = {
   dots: "Dot matrix",
   radial: "Radial voiceprint",
 };
+
+/** Compact labels for the read-only Tool strip (never used in the picker). */
+/** @type {Record<string, string>} */
+export const WAVEFORM_SHORT_NAMES = {
+  bars: "Bars",
+  scope: "Scope",
+  dots: "Matrix",
+  radial: "Radial",
+};

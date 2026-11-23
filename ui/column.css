@@ -1,127 +1,101 @@
-/* Columns */
+/* Columns — B-2: hairline separators + corner registration marks, no card border. */
 .column {
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1rem;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   overflow: hidden;
 }
 
 .column-header {
   display: flex;
   align-items: center;
-  font-size: 1rem;
-  font-weight: bold;
-  margin-bottom: 0.5rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--border);
-  letter-spacing: 0.05em;
+  gap: 7px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--ln);
+  font-size: var(--type-label);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.column-cid { opacity: .6; white-space: nowrap; }
+.column-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.column-ms { display: flex; gap: 3px; flex: none; }
+.mute-btn,
+.solo-btn {
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ln);
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--type-micro);
+  font-weight: 400;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  cursor: pointer;
+}
+.mute-btn.active,
+.solo-btn.active {
+  background: var(--ac);
+  color: var(--bg);
+  border-color: var(--ac);
 }
 
 .column-reasoning {
   flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 0.85rem;
-  line-height: 1.6;
-  padding-right: 0.5rem;
+  font-size: var(--type-base);
+  line-height: 1.85;
+  padding-top: 11px;
   scroll-behavior: smooth;
 }
-.column-reasoning::-webkit-scrollbar {
-  width: 4px;
-}
-
+.column-reasoning::-webkit-scrollbar { width: 4px; }
 .column-reasoning::-webkit-scrollbar-thumb {
-  background: var(--border-soft);
+  background: var(--ln-soft);
   border-radius: 2px;
 }
-
 .scroll-indicator {
   text-align: center;
-  font-size: 0.75rem;
-  padding: 0.25rem;
+  font-size: var(--type-micro);
+  padding: 2px;
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+/* The 78px Waveform panel holds only a 72px canvas — no text or codes. */
 .column-waveform {
   height: 78px;
-  width: 100%;
-  display: block;
-  border-top: 1px solid var(--border);
+  flex: none;
+  position: relative;
+  border-top: 1px solid var(--ln);
   cursor: pointer;
 }
 .column-waveform:hover { background: var(--sf); }
+.column-waveform-canvas { width: 100%; height: 72px; display: block; }
 
-/* Error state in columns */
-.error-msg {
-  color: var(--danger);
-  font-style: italic;
-  opacity: 0.8;
-}
+.error-msg { color: var(--danger); font-style: italic; opacity: .8; }
+.column.has-error .column-name { color: var(--danger); }
 
-.column.has-error {
-  border-color: var(--danger);
-  background: var(--danger-surface);
-}
-
-
-.mute-btn,
-.solo-btn {
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 3px;
-  border: 1px solid var(--text-dim);
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  flex-shrink: 0;
-
-
-  margin-left: 4px;
-  line-height: 1.2;
-  transition: background-color 0.1s, border-color 0.1s, color 0.1s;
-}
-
-
-.mute-btn:hover,
-.solo-btn:hover {
-  border-color: var(--text-dim);
-  color: var(--text);
-}
-
-
-.mute-btn.active {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: var(--signal-active);
-}
-
-
-.solo-btn.active {
-  background: var(--signal-active);
-  border-color: var(--signal-active);
-  color: var(--signal-active);
-}
-/* Karaoke word highlighting for TTS playback */
-.karaoke-word {
-  transition: color 0.15s ease, opacity 0.15s ease;
-  opacity: 0.85;
-}
-
-.karaoke-word.past {
-  opacity: 0.4;
-}
-
+/* Karaoke highlight: an inset left rule, not a glow or an underline. The
+   pipeline still computes word progress; B-2 simply does not draw it. */
+.karaoke-word { transition: color .15s ease, opacity .15s ease; opacity: .85; }
+.karaoke-word.past { opacity: .38; }
 .karaoke-word.active {
+  background: var(--sf);
+  box-shadow: inset 2px 0 0 var(--ac);
+  padding-left: 5px;
+  color: var(--ac);
+  font-weight: 700;
   opacity: 1;
-  text-shadow: 0 0 8px currentColor;
-  font-weight: 600;
-  /* A progress underline that grows across the word as audio plays. */
-  background-image: linear-gradient(currentColor, currentColor);
-  background-repeat: no-repeat;
-  background-position: 0 100%;
-  background-size: var(--karaoke-fill, 0%) 2px;
 }
