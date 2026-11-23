@@ -56,15 +56,11 @@ describe("Waveform variant selector", () => {
     assert.deepEqual(selector.getVariants(), ["scope", "scope", "scope"]);
   });
 
-  it("never emits a notification for any change", () => {
-    let notifications = 0;
-    const selector = createWaveformSelector(3, "scope", VARIANTS, {
-      random: () => 0.42,
-      notify: () => { notifications += 1; },
-    });
+  it("changes leave no trace beyond the variant array", () => {
+    const selector = createWaveformSelector(3, "scope", VARIANTS, { random: () => 0.42 });
     selector.setColumnVariant(0, "bars");
     selector.shuffle();
     selector.reset();
-    assert.equal(notifications, 0);
+    assert.deepEqual(selector.getVariants(), ["scope", "scope", "scope"]);
   });
 });

@@ -7,6 +7,8 @@ import "./history.css";
 
 /**
  * @typedef {Object} HistoryAPI
+ * @property {(fn: () => void) => void} onOpen
+ * @property {(fn: () => void) => void} onClose
  * @property {() => void} show
  * @property {() => void} hide
  * @property {() => void} toggle
@@ -21,6 +23,10 @@ import "./history.css";
  * @returns {HistoryAPI}
  */
 export function createHistory(container, store, onReplay) {
+  /** @type {(() => void) | null} */
+  let onClose = null;
+  /** @type {(() => void) | null} */
+  let onOpen = null;
   const panel = document.createElement("div");
   panel.className = "history-dock-inner";
 
@@ -78,8 +84,15 @@ export function createHistory(container, store, onReplay) {
     else show();
   }
 
-  closeBtn.addEventListener("click", hide);
-  tab.addEventListener("click", toggle);
+  closeBtn.addEventListener("click", () => { if (onClose) onClose(); else hide(); });
+  tab.addEventListener("click", () => {
+    if (container.classList.contains("open")) {
+      if (onClose) onClose(); else hide();
+    } else {
+      if (onOpen) onOpen();
+      else show();
+    }
+  });
   clearBtn.addEventListener("click", () => {
     if (store.list().length > 0 && !confirm("Clear all session history? This cannot be undone.")) return;
     store.clear();
@@ -128,5 +141,11 @@ export function createHistory(container, store, onReplay) {
     }
   }
 
-  return { show, hide, toggle, isOpen() { return container.classList.contains("open"); }, panel };
+  return {
+    show, hide, toggle,
+    onOpen(fn) { onOpen = fn; },
+    onClose(fn) { onClose = fn; },
+    isOpen() { return container.classList.contains("open"); },
+    panel,
+  };
 }

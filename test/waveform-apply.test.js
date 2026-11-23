@@ -30,15 +30,11 @@ describe("Applying Waveform variants to Columns", () => {
   });
 
   it("emits no notification when variants change", () => {
-    let notifications = 0;
-    const selector = createWaveformSelector(3, "scope", VARIANTS, {
-      random: () => 0.42,
-      notify: () => { notifications += 1; },
-    });
+    const selector = createWaveformSelector(3, "scope", VARIANTS, { random: () => 0.42 });
+    const columns = [makeColumn(), makeColumn(), makeColumn()];
     selector.shuffle();
-    applyVariants([makeColumn(), makeColumn(), makeColumn()], selector.getVariants(), {
-      notify: () => { notifications += 1; },
-    });
-    assert.equal(notifications, 0);
+    applyVariants(columns, selector.getVariants());
+    // The only observable effect is the variant each Column receives.
+    assert.deepEqual(columns.map((c) => c.seen[0]), selector.getVariants());
   });
 });

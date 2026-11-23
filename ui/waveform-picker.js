@@ -3,15 +3,8 @@
  * was clicked. Shows four live previews and the animation names only — no
  * variant codes, no labels on the Waveform panel itself.
  */
+import { WAVEFORM_NAMES } from "../audio/waveform-variants.js";
 import "./waveform-picker.css";
-
-/** @type {Record<string, string>} */
-const NAMES = {
-  bars: "Mirrored bars",
-  scope: "Oscilloscope",
-  dots: "Dot matrix",
-  radial: "Radial voiceprint",
-};
 
 /**
  * @typedef {Object} WaveformPickerAPI
@@ -62,7 +55,7 @@ export function createWaveformPicker(host, variantIds, onSelect) {
     canvas.width = 120;
     canvas.height = 34;
     const name = document.createElement("span");
-    name.textContent = NAMES[id] ?? id;
+    name.textContent = WAVEFORM_NAMES[id] ?? id;
     el.appendChild(canvas);
     el.appendChild(name);
     el.addEventListener("click", () => {

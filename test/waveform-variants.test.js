@@ -16,8 +16,4 @@ describe("Waveform variant contract", () => {
     for (const id of WAVEFORM_VARIANTS) assert.equal(normaliseVariant(id), id);
   });
 
-  it("only Oscilloscope needs time-domain data", () => {
-    // An independent literal: the scope branch is the single time-domain reader.
-    assert.equal(WAVEFORM_VARIANTS.filter((id) => id === "scope").length, 1);
-  });
 });

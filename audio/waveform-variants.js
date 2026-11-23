@@ -15,3 +15,11 @@ export const WAVEFORM_VARIANTS = ["bars", "scope", "dots", "radial"];
 export function normaliseVariant(id) {
   return WAVEFORM_VARIANTS.includes(/** @type {string} */ (id)) ? /** @type {string} */ (id) : "bars";
 }
+
+/** @type {Record<string, string>} */
+export const WAVEFORM_NAMES = {
+  bars: "Mirrored bars",
+  scope: "Oscilloscope",
+  dots: "Dot matrix",
+  radial: "Radial voiceprint",
+};

@@ -6,7 +6,7 @@
 
 [![Three models streaming reasoning side by side, each column voiced with a live waveform](docs/demo/demo-hero.gif)](docs/demo/thinking-out-loud-demo.mp4)
 
-Press Ask once and all three models start thinking out loud at the same time. Each column gets its own voice, speaking as the words stream in.
+Asking once starts all three models thinking out loud at the same time. Each column gets its own voice, speaking as the words stream in.
 
 **▶ Watch the full demo (45s, with sound):** [Streamable](https://streamable.com/izmq6f) (online until Jan 31, 2027) · [MP4 in the repo](docs/demo/thinking-out-loud-demo.mp4) (permanent)
 

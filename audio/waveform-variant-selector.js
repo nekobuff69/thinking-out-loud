@@ -20,7 +20,7 @@
  * @param {number} columnCount
  * @param {string} defaultVariant
  * @param {string[]} variantIds
- * @param {{ random?: () => number, notify?: (message: string) => void }} [options]
+ * @param {{ random?: () => number }} [options]
  * @returns {WaveformSelector}
  */
 export function createWaveformSelector(columnCount, defaultVariant, variantIds, options = {}) {

@@ -12,6 +12,7 @@ import "./prompt-selector.css";
  * @property {() => string | null} getSelectedQuestion
  * @property {(value: boolean) => void} setEnabled
  * @property {(index: number) => void} selectByKeyboard
+ * @property {(fn: () => void) => void} onClose
  * @property {() => void} show
  * @property {() => void} hide
  * @property {() => boolean} isOpen
@@ -30,6 +31,8 @@ export function createPromptSelector(container, curatedPrompts, recentQuestions 
   let enabled = true;
   /** @type {((question: string) => void) | null} */
   let onAsk = null;
+  /** @type {(() => void) | null} */
+  let onClose = null;
 
   const panel = document.createElement("div");
   panel.className = "palette-panel";
@@ -43,7 +46,7 @@ export function createPromptSelector(container, curatedPrompts, recentQuestions 
   close.type = "button";
   close.className = "palette-close";
   close.textContent = "× esc";
-  close.addEventListener("click", () => hide());
+  close.addEventListener("click", () => { if (onClose) onClose(); else hide(); });
   header.appendChild(title);
   header.appendChild(close);
 
@@ -89,7 +92,7 @@ export function createPromptSelector(container, curatedPrompts, recentQuestions 
   /** @param {string} question */
   function ask(question) {
     if (!enabled || !question) return;
-    hide();
+    if (onClose) onClose();
     onAsk?.(question);
   }
 
@@ -190,6 +193,7 @@ export function createPromptSelector(container, curatedPrompts, recentQuestions 
 
   return {
     onAsk(fn) { onAsk = fn; },
+    onClose(fn) { onClose = fn; },
     updateRecentQuestions: renderRecentQuestions,
     getSelectedQuestion() {
       if (selectedPrompt) return selectedPrompt;

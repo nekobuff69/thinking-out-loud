@@ -37,66 +37,11 @@ body {
   min-height: 100vh;
 }
 
-#app {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
-
-#columns {
-  flex: 1;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: 1fr;
-  gap: 1rem;
-  padding: 1rem 2rem;
-}
-
-/* Corner registration marks — a reusable B-2 instrument motif. */
-.registration-mark {
-  position: absolute;
-  width: 9px;
-  height: 9px;
-  pointer-events: none;
-}
-.registration-mark.top-left { top: 4px; left: 4px; border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
-.registration-mark.bottom-right { bottom: 4px; right: 4px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); }
-
 @keyframes pulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* Loading spinner */
-#loading-spinner {
-  display: none;
-  justify-content: center;
-  align-items: center;
-  padding: 2rem;
-}
-
-#loading-spinner.visible {
-  display: flex;
-}
-
-#loading-spinner .spinner-ring {
-  width: 32px;
-  height: 32px;
-  border: 2px solid var(--border);
-  border-top-color: var(--signal-active);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-/* State label colors */
-.state-label.checking { color: var(--signal-active); }
-.state-label.error { color: var(--danger); }
-
 @media (prefers-reduced-motion: reduce) {
-  #loading-spinner .spinner-ring,
   .scroll-indicator { animation: none; }
 }

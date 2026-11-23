@@ -10,6 +10,7 @@ import { createPromptSelector } from "./ui/prompt-selector.js";
 import { createHistory } from "./ui/history.js";
 import { createOverlayState } from "./ui/overlay-state.js";
 import { createWaveformSelector } from "./audio/waveform-variant-selector.js";
+import { WAVEFORM_NAMES } from "./audio/waveform-variants.js";
 import { createWaveformPicker } from "./ui/waveform-picker.js";
 import { applyVariants } from "./ui/waveform-apply.js";
 import { createColumn } from "./ui/column.js";
@@ -41,7 +42,6 @@ const questionBlock = must("question-block");
 const qText = must("q-text");
 const qSession = must("q-session");
 const qSource = must("q-source");
-const qAnchor = must("q-anchor");
 const columnsContainer = must("columns");
 const historyDock = must("history-dock");
 const paletteHost = must("question-palette");
@@ -54,6 +54,15 @@ const tElapsed = must("t-elapsed");
 const tWave = must("t-wave");
 const tMessage = must("t-message");
 
+/** @param {string} message @returns {void} */
+function showToast(message) {
+  const toast = document.createElement("div");
+  toast.className = "session-toast";
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 1800);
+}
+
 // --- Columns (Column API unchanged) ---
 const columns = new Map();
 for (const model of config.models) {
@@ -63,11 +72,15 @@ for (const model of config.models) {
 
 // --- Question palette ---
 const promptSelector = createPromptSelector(paletteHost, config.curatedPrompts, store.getQuestions());
+promptSelector.onClose(() => closeOverlay("palette"));
 
 // --- History dock (push-style flex sibling, never covers a Column) ---
 const historyPanel = createHistory(historyDock, store, (session) => {
+  showToast("Replaying session");
   orchestrator.replay(session);
 });
+historyPanel.onOpen(() => openOverlay("history"));
+historyPanel.onClose(() => closeOverlay("history"));
 
 // --- Overlay rendering ---
 /** @returns {void} */
@@ -98,7 +111,12 @@ function closeOverlay(name) {
   renderOverlays();
 }
 
-questionBlock.addEventListener("click", () => toggleOverlay("palette"));
+questionBlock.addEventListener("click", () => {
+  if (document.body.classList.contains("session-running")) {
+    showToast("Running · stop first");
+  }
+  toggleOverlay("palette");
+});
 paletteHost.addEventListener("click", (event) => {
   if (event.target === paletteHost) closeOverlay("palette");
 });
@@ -173,6 +191,7 @@ orchestrator.onStateChange((state) => {
     tMessage.textContent = "Checking LLM providers…";
   } else if (state === "Done") {
     tMessage.textContent = "Session saved";
+    showToast("Session saved");
   } else {
     tMessage.textContent = "";
   }
@@ -186,7 +205,10 @@ orchestrator.onStateChange((state) => {
   }
 });
 
-stopBtn.addEventListener("click", () => orchestrator.stop());
+stopBtn.addEventListener("click", () => {
+  showToast("Stopped");
+  orchestrator.stop();
+});
 
 // --- Ask: one action, no confirmation button ---
 /** @param {string} question */
@@ -196,11 +218,12 @@ async function ask(question) {
   qText.textContent = question;
   qSession.textContent = id;
   tSession.textContent = id;
+  showToast("Session started");
   const curatedIndex = config.curatedPrompts.indexOf(question);
   qSource.textContent = curatedIndex >= 0
     ? "Curated " + String(curatedIndex + 1).padStart(2, "0")
     : "Free-text question";
-  tOrder.textContent = config.models.map((m) => m.name).join(" → ");
+  tOrder.textContent = config.models.map((_, i) => "0" + (i + 1)).join(" → ");
   closeOverlay("palette");
   try {
     await orchestrator.start(question);
@@ -252,18 +275,10 @@ document.addEventListener("keydown", (event) => {
 });
 
 // --- Per-Column Waveform identity ---
-/** @type {Record<string, string>} */
-const NAME_BY_ID = {
-  bars: "MIRRORED BARS",
-  scope: "OSCILLOSCOPE",
-  dots: "DOT MATRIX",
-  radial: "RADIAL VOICEPRINT",
-};
-
 /** @returns {void} */
 function updateWaveReadout() {
   tWave.textContent = waveformSelector.getVariants()
-    .map((id) => NAME_BY_ID[id] ?? id.toUpperCase())
+    .map((id) => (WAVEFORM_NAMES[id] ?? id).toUpperCase())
     .join(" / ");
 }
 
