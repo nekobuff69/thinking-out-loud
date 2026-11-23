@@ -251,6 +251,62 @@ describe("OpenAICompatibleProvider", () => {
     assert.strictEqual(urlPath(/** @type {string} */ (capturedUrl)), "/v1/chat/completions");
   });
 
+  it("sends Authorization header when apiKey is provided", async () => {
+    /** @type {Record<string, unknown> | undefined} */
+    let capturedHeaders;
+    globalThis.fetch = /** @type {typeof fetch} */ (async (url, init) => {
+      capturedHeaders = /** @type {Record<string, unknown>} */ (init?.headers);
+      return new Response(sseStream("data: [DONE]\n\n"), { status: 200 });
+    });
+
+    const provider = new OpenAICompatibleProvider({
+      url: "https://openrouter.ai/api/v1",
+      model: "openai/gpt-oss-20b",
+      apiKey: "sk-or-test",
+    });
+
+    await provider.streamReasoning("q", "sys", { onDone: () => {} });
+    assert.strictEqual(capturedHeaders?.["Authorization"], "Bearer sk-or-test");
+    assert.strictEqual(capturedHeaders?.["Content-Type"], "application/json");
+  });
+
+  it("omits Authorization header when apiKey is absent (local providers)", async () => {
+    /** @type {Record<string, unknown> | undefined} */
+    let capturedHeaders;
+    globalThis.fetch = /** @type {typeof fetch} */ (async (url, init) => {
+      capturedHeaders = /** @type {Record<string, unknown>} */ (init?.headers);
+      return new Response(sseStream("data: [DONE]\n\n"), { status: 200 });
+    });
+
+    const provider = new OpenAICompatibleProvider({
+      url: "http://localhost:1234/v1",
+      model: "test-model",
+    });
+
+    await provider.streamReasoning("q", "sys", { onDone: () => {} });
+    assert.strictEqual(capturedHeaders?.["Authorization"], undefined);
+  });
+
+  it("includes max_tokens in the request body when configured", async () => {
+    let capturedBody = null;
+    globalThis.fetch = /** @type {typeof fetch} */ (async (url, init) => {
+      capturedBody = /** @type {string} */ (init?.body);
+      return new Response(sseStream("data: [DONE]\n\n"), { status: 200 });
+    });
+
+    const provider = new OpenAICompatibleProvider({
+      url: "https://openrouter.ai/api/v1",
+      model: "openai/gpt-oss-20b",
+      maxTokens: 200,
+    });
+
+    await provider.streamReasoning("q", "sys", { onDone: () => {} });
+    const body = JSON.parse(/** @type {string} */ (capturedBody));
+    assert.strictEqual(body.max_tokens, 200);
+    assert.strictEqual(body.stream, true);
+    assert.strictEqual(body.model, "openai/gpt-oss-20b");
+  });
+
   it("retries once on non-abort failure", async () => {
     let attempts = 0;
     globalThis.fetch = /** @type {typeof fetch} */ (async () => {

@@ -4,17 +4,24 @@
  * Retries once on failure before falling back to error state.
  *
  * @param {string} baseUrl
+ * @param {string} [apiKey] - Bearer token for hosted providers (optional)
  * @param {number} [timeoutMs]
  * @returns {Promise<boolean>}
  */
-export async function healthCheck(baseUrl, timeoutMs = 5000) {
+export async function healthCheck(baseUrl, apiKey = "", timeoutMs = 5000) {
   const attempt = async () => {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       const base = baseUrl.replace(/\/+$/g, "");
+      /** @type {Record<string, string>} */
+      const headers = {};
+      if (apiKey) {
+        headers["Authorization"] = `Bearer ${apiKey}`;
+      }
       const response = await fetch(`${base}/models`, {
         method: "GET",
+        headers,
         signal: controller.signal,
       });
       clearTimeout(timeout);

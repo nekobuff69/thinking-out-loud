@@ -120,18 +120,26 @@ export class OpenAICompatibleProvider extends LLMProvider {
   #model;
   /** @type {"separate" | "tagged" | "none"} */
   #reasoningFormat;
+  /** @type {string} */
+  #apiKey;
+  /** @type {number | undefined} */
+  #maxTokens;
 
   /**
    * @param {Object} opts
    * @param {string} opts.url - Provider base URL
    * @param {string} opts.model - Model identifier
    * @param {"separate" | "tagged" | "none"} [opts.reasoningFormat]
+   * @param {string} [opts.apiKey] - Bearer token (hosted providers like OpenRouter)
+   * @param {number} [opts.maxTokens] - Hard generation cap sent in the request body
    */
-  constructor({ url, model, reasoningFormat = "separate" }) {
+  constructor({ url, model, reasoningFormat = "separate", apiKey = "", maxTokens }) {
     super();
     this.#url = url;
     this.#model = model;
     this.#reasoningFormat = reasoningFormat;
+    this.#apiKey = apiKey;
+    this.#maxTokens = maxTokens;
   }
 
   /**
@@ -152,9 +160,15 @@ export class OpenAICompatibleProvider extends LLMProvider {
       : `${normalized}/chat/completions`;
 
     const attempt = async (/** @type {AbortSignal | undefined} */ abortSignal) => {
+      /** @type {Record<string, string>} */
+      const headers = { "Content-Type": "application/json" };
+      if (this.#apiKey) {
+        headers["Authorization"] = `Bearer ${this.#apiKey}`;
+      }
+
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         signal: abortSignal,
         body: JSON.stringify({
           model: this.#model,
@@ -163,6 +177,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
             { role: "user", content: question },
           ],
           stream: true,
+          ...(this.#maxTokens !== undefined ? { max_tokens: this.#maxTokens } : {}),
         }),
       });
 

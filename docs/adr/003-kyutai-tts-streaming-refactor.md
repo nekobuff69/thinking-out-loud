@@ -1,9 +1,10 @@
 # ADR-003: Replace Kokoro with Kyutai TTS via Local MLX Server
 
 ## Status
-## Status
 
 Superseded by ADR-005 (Pocket TTS switch, May 2026).
+
+Historical note: the LLM deployment assumption in this ADR (local LM Studio) no longer holds. The app now uses OpenRouter cloud inference — see ADR-006. TTS decisions below are evaluated on their original merits.
 
 Implementation completed across 5 slices (#35–#39):
 1. `server/tts-server.py` — Python+MLX WebSocket server with Mimi codec
@@ -108,11 +109,11 @@ Kokoro's preset voice IDs (`af_bella`, `bm_lewis`, etc.) are replaced with Kyuta
 - **Gap-free playback:** Continuous PCM stream eliminates the 50 ms inter-sentence gaps.
 - **Apple Silicon optimized:** MLX uses Metal GPU / Neural Engine on Mac.
 - **Simpler pipeline:** Removes SentenceBuffer boundary detection, PlaybackQueue state machine, and pre-synthesis logic.
-- **Architecturally consistent:** The app already requires a local LLM server (LM Studio at `localhost:1234`). A local TTS server on another port fits the same operational model.
+- **Architecturally consistent (as of May 2026):** The app then required a local LLM server (LM Studio at `localhost:1234`), so a local TTS server on another port fit the same operational model. Superseded by ADR-006 for LLM deployment.
 
 ### Negative / Trade-offs
 
-- **New operational dependency:** Users must run `python server/tts-server.py` alongside LM Studio. The app will not work without it.
+- **New operational dependency:** Users must run `python server/tts-server.py` alongside the LLM provider (LM Studio at the time; now OpenRouter, per ADR-006). The app will not work without it.
 - **No browser fallback:** If the TTS server is not running, there is no TTS. Kokoro's in-browser ONNX execution is gone.
 - **Larger model:** Kyutai TTS is 0.75B–1.6B parameters vs Kokoro's 82M. First download is several GB.
 - **Python dependency:** Requires Python 3.12+, MLX, and `moshi-mlx`. The Rust server would have been a single binary.

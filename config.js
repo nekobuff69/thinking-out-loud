@@ -6,6 +6,7 @@
  * @property {string} provider
  * @property {string} url
  * @property {string} model
+ * @property {string} [apiKey] - Bearer token for hosted providers (from .env, never committed)
  * @property {string} voice
  * @property {string} color
  * @property {number} pan
@@ -35,6 +36,12 @@
  * @property {number} maxHistorySessions
  */
 
+// OpenRouter credentials come from .env (Vite injects VITE_* vars at serve/build time).
+// Never hardcode the key here — see .env / .gitignore.
+const env = /** @type {any} */ (import.meta.env ?? {});
+const OPENROUTER_API_KEY = env.VITE_OPENROUTER_API_KEY ?? "";
+const OPENROUTER_MODEL = env.VITE_OPENROUTER_MODEL || "openai/gpt-oss-20b";
+
 /** @type {Config} */
 export const config = {
 	curatedPrompts: [
@@ -51,9 +58,10 @@ export const config = {
 			label: "释·Buddhism",
 			systemPrompt:
 				"You are a Chan Buddhist. You see through attachments, contemplate suffering and impermanence, and use koan-like paradox to break dualities.",
-			provider: "lm-studio",
-			url: "http://localhost:1234/v1",
-			model: "gpt-oss-20b",
+			provider: "openrouter",
+			url: "https://openrouter.ai/api/v1",
+			model: OPENROUTER_MODEL,
+			apiKey: OPENROUTER_API_KEY,
 			voice: "user_clone",
 			color: "#00ff88",
 			pan: -0.5,
@@ -64,9 +72,10 @@ export const config = {
 			label: "儒·Confucianism",
 			systemPrompt:
 				"You are a Confucian scholar. You reason through human relationships, self-cultivation, and heavenly principle. You value harmony, virtue, and the doctrine of the mean.",
-			provider: "lm-studio",
-			url: "http://localhost:1234/v1",
-			model: "gpt-oss-20b",
+			provider: "openrouter",
+			url: "https://openrouter.ai/api/v1",
+			model: OPENROUTER_MODEL,
+			apiKey: OPENROUTER_API_KEY,
 			voice: "eve",
 			color: "#ff6644",
 			pan: 0.0,
@@ -77,9 +86,10 @@ export const config = {
 			label: "道·Daoism",
 			systemPrompt:
 				"You are a Daoist recluse. You question the usefulness of thinking itself, speak in natural metaphors, embrace paradox, and dwell in not-knowing.",
-			provider: "lm-studio",
-			url: "http://localhost:1234/v1",
-			model: "gpt-oss-20b",
+			provider: "openrouter",
+			url: "https://openrouter.ai/api/v1",
+			model: OPENROUTER_MODEL,
+			apiKey: OPENROUTER_API_KEY,
 			voice: "jane",
 			color: "#44aaff",
 			pan: 0.5,
@@ -92,9 +102,9 @@ export const config = {
 		maxTokens: 200, // soft token cap per LLM stream
 		sentenceTimeoutTokens: 200, // force-flush threshold per sentence
 		useTextChunker: true, // enable chunker for prosody tuning
-		chunkerMaxWords: 100, // words in buffer before force-flush
+		chunkerMaxWords: 20, // words in buffer before force-flush (small = shorter TTS requests = lower first-audio latency on CPU)
 		chunkerTimeoutMs: 4000, // ms of silence before flushing buffer
-		chunkerMinWordsForTimeout: 20, // min words needed before timeout fires
+		chunkerMinWordsForTimeout: 10, // min words needed before timeout fires
 		chunkerFlushOnPunctuation: true, // split on punctuation characters
 		chunkerPunctuation: ".!?;", // which chars count as punctuation
 		randomizePlayback: true, // shuffle which voice speaks first/second/third per session

@@ -27,13 +27,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 SAMPLE_RATE = 24000
-CATALOG_VOICES = [
-    "cosette", "marius", "javert", "alba", "jean", "anna", "vera",
-    "fantine", "charles", "paul", "eponine", "azelma", "george",
-    "mary", "jane", "michael", "eve", "bill_boerst", "peter_yearsley",
-    "stuart_bell", "caro_davy", "giovanni", "lola", "juergen",
-    "rafael", "estelle",
-]
+# Only the catalog voices actually referenced by config.js. The third voice
+# in use ("user_clone") is a custom clone loaded from the voices/ directory.
+# Keep this list short — every entry is a KV-cache state held in memory.
+CATALOG_VOICES = ["eve", "jane"]
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -307,7 +304,18 @@ def main() -> None:
     ap.add_argument("--voices-dir", type=str, default=None,
                     help="Directory containing .wav files for voice cloning "
                          "(default: ../voices relative to this script)")
+    ap.add_argument("--threads", type=int, default=None,
+                    help="torch CPU thread count (default: physical core count)")
     args = ap.parse_args()
+
+    # --- cap torch CPU threads before the model loads ---
+    if args.threads:
+        try:
+            import torch
+            torch.set_num_threads(args.threads)
+            log("INIT", f"torch threads set to {args.threads}")
+        except Exception as exc:
+            log("WARN", f"Could not set torch threads: {exc}")
 
     # --- determine voices directory ---
     if args.voices_dir:
@@ -357,6 +365,22 @@ def main() -> None:
         sys.exit(1)
 
     log("INIT", f"Available voices: {sorted(_voices.keys())}")
+
+    # --- warmup: pay first-inference cost now, not on the first real request ---
+    try:
+        warmup_voice = next(iter(_voices.values()))
+        warmup_text = "Good morning."
+        log("INIT", "Warming up TTS generation …")
+        t0 = time.perf_counter()
+        audio_seconds = 0.0
+        for chunk in _pocket_tts.generate_audio_stream(warmup_voice, warmup_text):
+            audio_seconds += chunk.shape[-1] / SAMPLE_RATE
+        elapsed = time.perf_counter() - t0
+        rtf = elapsed / audio_seconds if audio_seconds > 0 else float("inf")
+        log("INIT", f"Warmup done: {audio_seconds:.2f}s audio in {elapsed:.2f}s "
+                    f"(~{1.0 / rtf:.1f}x realtime)" if rtf > 0 else "Warmup done")
+    except Exception as exc:
+        log("WARN", f"Warmup failed (continuing): {exc}")
 
     import uvicorn
     log("INFO", f"Starting Pocket TTS server on {args.host}:{args.port}")

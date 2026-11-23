@@ -157,7 +157,7 @@ export class Orchestrator {
 		const healthResults = await Promise.all(
 			this.#models.map(async (m) => ({
 				model: m,
-				ok: await healthCheck(m.url),
+				ok: await healthCheck(m.url, m.apiKey ?? ""),
 			})),
 		);
 
@@ -307,7 +307,7 @@ export class Orchestrator {
 			if (!column) continue;
 			column.clear();
 
-			const cacheKey = `${model.url}|${model.model}|${model.reasoningFormat ?? "separate"}`;
+			const cacheKey = `${model.url}|${model.model}|${model.reasoningFormat ?? "separate"}|${model.apiKey ?? ""}`;
 			let llmProvider = this.#providerCache.get(cacheKey);
 			if (!llmProvider) {
 				llmProvider = new OpenAICompatibleProvider({
@@ -316,6 +316,8 @@ export class Orchestrator {
 					reasoningFormat: /** @type {"separate" | "tagged" | "none"} */ (
 						model.reasoningFormat ?? "separate"
 					),
+					apiKey: model.apiKey ?? "",
+					maxTokens: this.#ttsConfig.maxTokens,
 				});
 				this.#providerCache.set(cacheKey, llmProvider);
 			}

@@ -23,9 +23,10 @@
 
 | Term | Definition | Aliases to avoid |
 |---|---|---|
-| **LLM** | A large language model running locally that receives a question and produces reasoning | AI, bot, agent, mind |
-| **Model** | A specific LLM identified by architecture and weights (e.g. Qwen, Gemma, GPT-OSS) | LLM instance, engine, brain |
-| **Provider** | The local inference server that hosts and runs models (e.g. LM Studio) | Server, backend, inference engine, runtime |
+| **LLM** | A large language model, hosted via OpenRouter in the current stack, that receives a question and produces reasoning | AI, bot, agent, mind |
+| **Model** | The hosted model slug in config (currently `openai/gpt-oss-20b`); the three columns keep internal names Qwen, Gemma, GPT-OSS but call the same model with different system prompts | LLM instance, engine, brain |
+| **Provider** | The service serving the model through an OpenAI-compatible API — OpenRouter (cloud) in the current stack; Bearer API key required | Server, backend, inference engine, runtime |
+| **API key** | `VITE_OPENROUTER_API_KEY` from `.env`, injected by Vite into the browser bundle and sent as `Authorization: Bearer <key>` on provider requests | Token, secret, password (ambiguous with LLM tokens) |
 | **Reasoning** | The LLM's internal thought process — the `reasoning_content` field in the API response | Thinking, chain of thought, internal monologue, reasoning block |
 | **Reasoning format** | How the provider separates reasoning from final answer: `separate` (dedicated field), `tagged` (`<think>` tags), or `none` (no separation) | Format mode, parsing mode |
 | **Reasoning content** | The raw text of the LLM's reasoning, streamed token by token | Thinking block, thought stream, reasoning stream |
@@ -33,7 +34,7 @@
 | **Content boundary** | The point in the stream where the LLM transitions from reasoning to final answer. Deliberately suppressed — only reasoning is displayed and spoken. | Cut point, answer start, switch |
 | **Streaming** | Receiving LLM output token-by-token via SSE as it is generated | Live, real-time, chunked |
 | **Token** | A single unit of text from the LLM stream (sub-word or punctuation) | Piece, fragment, chunk (when referring to text, not audio) |
-**Token cap** | The maximum word count (configurable, default 200 via `maxTokens`) after which no new text is fed to TTS. Reasoning text continues accumulating in the pipeline for storage. | Speech limit, TTS cutoff, word budget |
+**Token cap** | Configured via `tts.maxTokens` (default 200). The pipeline stops feeding TTS when its word count reaches the cap; reasoning text continues accumulating for storage. The same value is sent to the provider as `max_tokens`, capping generated tokens for the LLM request. | Speech limit, TTS cutoff, word budget |
 | **System prompt** | The instruction given to a model before the question, shaping its reasoning style. Each model has its own `systemPrompt` in config; falls back to the global `config.systemPrompt` if absent. | System message, preamble, context |
 | **Label** | The UI column header text displayed instead of the internal model name. Set via `label` in `ModelConfig`; falls back to `name` if absent. Currently "释·Buddhism", "儒·Confucianism", "道·Daoism". | Display name, heading, title |
 | **Role** | The philosophical persona assigned via a model's `systemPrompt`. The three roles are **Buddhism** (deconstructive, Chan Buddhist), **Confucianism** (relational, Confucian scholar), and **Daoism** (paradoxical, Daoist recluse). | Persona, character, voice (abstract) |
@@ -51,7 +52,7 @@
 | **Speaker embedding** | A mathematical representation of a speaker's voice characteristics. FlowLM KV cache state derived from Mimi-encoded audio, exportable as `.safetensors`. | Voice embedding, voiceprint, conditioning vector |
 | **Voice cloning** | Creating a Voice from a raw audio sample (WAV, MP3). Native in Pocket TTS via `get_state_for_audio_prompt()` — encodes audio through Mimi → FlowLM speaker projection → voice state ready for generation. DSM voice cloning requires a gated model not publicly released (see `docs/tts-technology-evaluation.md`). | Voice creation, voice extraction, speaker enrollment |
 | **PCM chunk** | A single Float32Array audio frame received from Pocket TTS server via HTTP streaming response, played continuously through the AudioContext | Audio frame, PCM buffer, audio segment |
-**Text chunker** | Word accumulator that flushes on configurable punctuation (`.!?;`, configurable), max words (configurable, default 100), or silence timeout (configurable, default 4000ms, min 20 words). Feeds complete sentences/clauses to TTS. Inserted between LLM token stream and TTS backend; disabled by default but enabled in prod config. | Word accumulator, chunk accumulator |
+**Text chunker** | Word accumulator that flushes on configurable punctuation (`.!?;`, configurable), max words (configurable, default 20), or silence timeout (configurable, default 4000ms, min 10 words). Feeds complete sentences/clauses to TTS. Inserted between LLM token stream and TTS backend; disabled by default but enabled in prod config. | Word accumulator, chunk accumulator |
 **First-audio latency** | Time from first reasoning token arriving to first PCM chunk playing — typically ~200ms with Pocket TTS's sentence-level HTTP delivery | Time-to-first-chunk, TTS startup delay |
 | **AudioContext** | The browser's Web Audio API context managing all audio routing and playback | Audio graph, audio engine, sound system |
 | **Channel** | A per-model audio pipeline: gain node → stereo panner → AnalyserNode → output. Supports two playback modes: `playStream()` (replay) and `openStream()` (live). | Audio lane, voice lane, audio strip |
@@ -122,6 +123,6 @@
 ## Flagged ambiguities
 
 - "**thinking**" was used conversationally to mean both the **Thinking** session state and the act of **Reasoning**. In the domain language, **Thinking** is always a session state; **Reasoning** is the model's output. Say "the session is in Thinking state" not "the model is thinking."
-- "**model**" without qualification is ambiguous — it could mean **LLM** (Qwen, Gemma) or **TTS model** (Pocket TTS). Always disambiguate: say **Model** for LLMs, **TTS model** for speech synthesis.
+- "**model**" without qualification is ambiguous — it could mean the hosted **LLM** (internal column names Qwen/Gemma/GPT-OSS, all backed by the same OpenRouter model slug) or the **TTS model** (Pocket TTS). Always disambiguate: say **Model** for LLMs, **TTS model** for speech synthesis.
 - "**voice**" was used loosely for both the abstract idea ("giving AI a voice") and the concrete TTS voice preset. Use **Voice** only for the TTS preset. For the abstract idea, say "the model speaks" or "the model's speech." Also ambiguous: a **Voice** may refer to the config value (an embedding name like `alba-mackenna/casual.wav`), the underlying **Speaker embedding** (a `.safetensors` file), or a raw audio sample used for **Voice cloning**. Disambiguate: use **Voice** for the identity, **Speaker embedding** for the data file, **Voice cloning** for the creation process.
 - "**stream**" was used for both the LLM data flow and the audio playback. In the domain language, **Streaming** is always the LLM token flow. For audio, say "playback" or "the **Channel** is active." A **TTS stream** (via **Stream handle**) is the active synthesis session between one pipeline and the server.

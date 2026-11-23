@@ -14,7 +14,7 @@ import { OpenAICompatibleProvider } from "./providers/openai-compatible-provider
  *
  * Backward-compatible wrapper around OpenAICompatibleProvider.
  *
- * @param {string} url - Provider URL (e.g. http://localhost:1234/v1 or http://localhost:1234/v1/chat/completions)
+ * @param {string} url - Provider URL (e.g. https://openrouter.ai/api/v1 or https://openrouter.ai/api/v1/chat/completions)
  * @param {string} model - Model identifier
  * @param {string} systemPrompt - System message content
  * @param {string} question - User question
@@ -29,9 +29,16 @@ export async function streamReasoning(url, model, systemPrompt, question, callba
     options = {};
   }
 
-  const provider = new OpenAICompatibleProvider({ url, model, reasoningFormat: "separate" });
-  // Options are no longer passed through to the provider (unused in the app).
+  const opts = /** @type {Record<string, unknown>} */ (options);
+  const provider = new OpenAICompatibleProvider({
+    url,
+    model,
+    reasoningFormat: "separate",
+    apiKey: typeof opts.apiKey === "string" ? opts.apiKey : "",
+    maxTokens: typeof opts.maxTokens === "number" ? opts.maxTokens : undefined,
+  });
+  // Remaining options are not passed through to the provider (unused in the app).
   // If needed in the future, extend OpenAICompatibleProvider constructor.
-  void options;
+  void opts;
   return provider.streamReasoning(question, systemPrompt, callbacks, signal);
 }

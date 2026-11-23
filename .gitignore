@@ -12,3 +12,10 @@ dev-note-dont-read.md
 server.log
 voices/
 server/cosyvoice3/
+
+# WorkBuddy agent workspace data (session memory logs — not project source)
+.workbuddy/
+
+# Local benchmark artifacts (2026-11-23 TTS benchmarking session)
+tts-bench*.log
+bench_*.wav

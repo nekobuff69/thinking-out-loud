@@ -23,16 +23,16 @@ Single-context repo:
 ├── index.js
 ├── config.js
 ├── docs/adr/
-│   └── 001-deepen-module-architecture.md
+│   └── 001–006 (006: OpenRouter cloud LLM migration)
 ├── ui/          (prompt-selector, column, history + CSS)
 ├── session/     (orchestrator, channel-pipeline, storage, event-bus, adapters)
 ├── tts/         (pocket-tts-backend, tts-engine, text-chunker)
 ├── audio/       (audio-graph, waveform)
-├── llm/         (llm-stream, health-check, providers/)
+├── llm/         (llm-stream, health-check, providers/ — OpenRouter by default)
 ├── server/      (tts-server-pocket.py, test_server_pocket.py)
 ├── docs/        (adr/, debug-overlay-reference.md, tts-technology-evaluation.md)
 ├── styles/      (global.css, top-bar.css)
-└── test/        (14 suites, 90 tests)
+└── test/        (15 suites, 102 tests)
 ```
 
 ## Use the glossary's vocabulary

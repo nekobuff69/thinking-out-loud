@@ -1,5 +1,8 @@
 import { TTSEngine } from "./tts-engine.js";
 
+/** Samples per emitted PCM chunk (~170ms @ 24kHz mono). */
+const CHUNK_SIZE = 4096;
+
 /**
  * Pocket TTS HTTP client.
  *
@@ -51,9 +54,9 @@ export class PocketTtsBackend extends TTSEngine {
   /**
    * Synthesise text to speech via a single HTTP POST.
    *
-   * The response is a streaming WAV.  We read the whole body, decode the
-   * WAV into Float32 PCM, and deliver it (possibly in multiple chunks) via
-   * onAudioChunk.
+   * The response is a streaming WAV.  We parse the WAV header as soon as it
+   * arrives, then decode and deliver PCM incrementally as bytes come in —
+   * playback can start before the server finishes synthesising the sentence.
    *
    * @param {string} text
    * @param {string} voice
@@ -131,11 +134,68 @@ export class PocketTtsBackend extends TTSEngine {
       return;
     }
 
-    try {
-      /** @type {Uint8Array[]} */
-      const chunks = [];
-      let totalLength = 0;
+    // Incremental decode state
+    /** @type {Uint8Array[]} */
+    const pending = [];
+    let bufferedLength = 0;
+    /** @type {{ sampleRate: number, numChannels: number, audioFormat: number, bitsPerSample: number, dataOffset: number, dataSize: number } | null} */
+    let header = null;
+    let bytesPerSample = 4;
+    /** @type {DataView | null} */
+    let view = null;
+    let emittedSamples = 0;
+    let done = false;
 
+    /**
+     * Concatenate pending byte chunks into one contiguous buffer.
+     * @returns {Uint8Array}
+     */
+    const coalesce = () => {
+      const buffer = new Uint8Array(bufferedLength);
+      let offset = 0;
+      for (const chunk of pending) {
+        buffer.set(chunk, offset);
+        offset += chunk.length;
+      }
+      pending.length = 0;
+      pending.push(buffer);
+      return buffer;
+    };
+
+    /**
+     * Emit all complete samples that arrived since the last emission.
+     * @param {Uint8Array} buffer
+     * @param {(pcm: Float32Array, sampleRate: number) => void} cb
+     */
+    const emitAvailable = (buffer, cb) => {
+      if (!header || !view) return;
+      const data = header.dataSize < 0xFFFFFF00
+        ? Math.min(header.dataSize, buffer.length - header.dataOffset)
+        : buffer.length - header.dataOffset;
+      if (data <= 0) return;
+      const totalSamples = Math.floor(data / bytesPerSample);
+      if (totalSamples <= emittedSamples) return;
+
+      for (let i = emittedSamples; i < totalSamples; i += CHUNK_SIZE) {
+        const end = Math.min(i + CHUNK_SIZE, totalSamples);
+        const pcm = new Float32Array(end - i);
+        for (let s = i; s < end; s++) {
+          const byteOffset = header.dataOffset + s * bytesPerSample;
+          if (header.audioFormat === 3 && header.bitsPerSample === 32) {
+            pcm[s - i] = view.getFloat32(byteOffset, true);
+          } else if (header.audioFormat === 1 && header.bitsPerSample === 16) {
+            pcm[s - i] = view.getInt16(byteOffset, true) / 32768.0;
+          } else {
+            pcm[s - i] = 0;
+          }
+        }
+        if (this.#stopped) return;
+        cb(pcm, header.sampleRate);
+      }
+      emittedSamples = totalSamples;
+    };
+
+    try {
       while (true) {
         let readResult;
         try {
@@ -145,37 +205,46 @@ export class PocketTtsBackend extends TTSEngine {
           throw err;
         }
 
-        const { done, value } = readResult;
+        const { done: streamDone, value } = readResult;
+        if (value) {
+          pending.push(value);
+          bufferedLength += value.length;
+        }
+        if (streamDone) done = true;
+
+        // Coalesce into one contiguous buffer, then try to parse the WAV
+        // header once enough bytes have arrived.
+        const buffer = coalesce();
+
+        if (!header && bufferedLength >= 12) {
+          header = this.#parseWavHeader(buffer);
+          if (header) {
+            if (header.numChannels !== 1) {
+              if (this.#stopped) return;
+              onError?.("TTS response is not mono — unsupported");
+              return;
+            }
+            bytesPerSample = header.bitsPerSample / 8;
+          } else if (done) {
+            if (this.#stopped) return;
+            onError?.("Failed to decode WAV response");
+            return;
+          }
+        }
+
+        if (header) {
+          // The buffer is re-coalesced each iteration, so rebuild the view
+          view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+          emitAvailable(buffer, onAudioChunk);
+        }
+
         if (done) break;
-        chunks.push(value);
-        totalLength += value.length;
       }
 
-      // Concatenate all chunks
-      const buffer = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        buffer.set(chunk, offset);
-        offset += chunk.length;
-      }
-
-      // Decode WAV
-      const decoded = this.#decodeWav(buffer);
-      if (!decoded) {
+      if (!header) {
         if (this.#stopped) return;
         onError?.("Failed to decode WAV response");
         return;
-      }
-
-      const { pcm, sampleRate } = decoded;
-      if (pcm.length > 0) {
-        // Deliver in reasonable-sized chunks
-        const CHUNK_SIZE = 4096;
-        for (let i = 0; i < pcm.length; i += CHUNK_SIZE) {
-          if (this.#stopped) return;
-          const slice = pcm.subarray(i, Math.min(i + CHUNK_SIZE, pcm.length));
-          onAudioChunk(slice, sampleRate);
-        }
       }
 
       if (this.#stopped) return;
@@ -190,15 +259,18 @@ export class PocketTtsBackend extends TTSEngine {
   }
 
   /**
-   * Decode a WAV buffer into { pcm: Float32Array, sampleRate: number }.
+   * Parse a WAV header from the beginning of *buffer*.
    * Handles float32 (format 3) and int16 PCM (format 1).
-   * Returns null if the WAV cannot be decoded.
+   * Returns null if the buffer does not (yet) contain a full header.
+   *
+   * Note: streaming responses carry a placeholder data size (0xFFFFFFFF);
+   * consumers must use available byte counts instead of dataSize.
    *
    * @param {Uint8Array} buffer
-   * @returns {{ pcm: Float32Array, sampleRate: number } | null}
+   * @returns {{ sampleRate: number, numChannels: number, audioFormat: number, bitsPerSample: number, dataOffset: number, dataSize: number } | null}
    */
-  #decodeWav(buffer) {
-    if (buffer.length < 44) return null;
+  #parseWavHeader(buffer) {
+    if (buffer.length < 12) return null;
 
     const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 
@@ -213,15 +285,16 @@ export class PocketTtsBackend extends TTSEngine {
     let dataOffset = 0;
     let dataSize = 0;
 
-    // Scan chunks
+    // Scan chunks until "data" or the buffer runs out (incomplete header)
     let off = 12;
-    while (off <= buffer.length - 8) {
+    while (off + 8 <= buffer.length) {
       const chunkId = String.fromCharCode(
         buffer[off], buffer[off + 1], buffer[off + 2], buffer[off + 3]
       );
       const chunkSize = view.getUint32(off + 4, true);
 
       if (chunkId === "fmt ") {
+        if (off + 8 + 16 > buffer.length) return null; // fmt body not fully arrived
         audioFormat = view.getUint16(off + 8, true);
         numChannels = view.getUint16(off + 10, true);
         sampleRate = view.getUint32(off + 12, true);
@@ -235,38 +308,9 @@ export class PocketTtsBackend extends TTSEngine {
       off += 8 + chunkSize;
     }
 
-    if (dataOffset === 0 || dataSize === 0) return null;
+    if (dataOffset === 0) return null;
 
-    // Only mono is supported for this client
-    if (numChannels !== 1) {
-      // Could downmix, but for tracer bullet just reject
-      return null;
-    }
-
-    // Extract PCM
-    let pcm;
-    if (audioFormat === 3 && bitsPerSample === 32) {
-      // IEEE float32 — direct copy
-      const floatCount = Math.min(dataSize / 4, Math.floor((buffer.length - dataOffset) / 4));
-      if (floatCount <= 0) return null;
-      pcm = new Float32Array(floatCount);
-      for (let i = 0; i < floatCount; i++) {
-        pcm[i] = view.getFloat32(dataOffset + i * 4, true);
-      }
-    } else if (audioFormat === 1 && bitsPerSample === 16) {
-      // int16 PCM — convert to float
-      const sampleCount = Math.min(dataSize / 2, Math.floor((buffer.length - dataOffset) / 2));
-      if (sampleCount <= 0) return null;
-      pcm = new Float32Array(sampleCount);
-      for (let i = 0; i < sampleCount; i++) {
-        pcm[i] = view.getInt16(dataOffset + i * 2, true) / 32768.0;
-      }
-    } else {
-      // Unsupported format — return empty (no crash)
-      return { pcm: new Float32Array(0), sampleRate };
-    }
-
-    return { pcm, sampleRate };
+    return { sampleRate, numChannels, audioFormat, bitsPerSample, dataOffset, dataSize };
   }
 
   /**

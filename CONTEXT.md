@@ -1,17 +1,17 @@
 # Thinking Out Loud — Project Context
 
-> A browser-based art installation: ask a philosophical question, watch three local LLMs reason aloud in real time, with synchronized TTS audio and live waveform visualizations.
+> A browser-based art installation: ask a philosophical question, watch three cloud-hosted reasoning personas reason aloud in real time, with synchronized local TTS audio and live waveform visualizations.
 
 ## Purpose
 
-"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three local LLMs (Qwen, Gemma, GPT-OSS) stream their internal reasoning tokens simultaneously. Each model's reasoning is displayed in real time. The reasoning text is synthesized to speech sequentially — voices speak one at a time in a random order per session — each in a distinct voice spatially panned across stereo channels with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
+"Thinking Out Loud" makes machine reasoning audible and visible. When the user asks a question, three persona-configured streams from the same hosted model (OpenRouter `gpt-oss-20b` by default; internal names Qwen, Gemma, GPT-OSS) stream their internal reasoning tokens simultaneously. Each stream's reasoning is displayed in real time. The reasoning text is synthesized to speech sequentially — voices speak one at a time in a random order per session — each in a distinct voice spatially panned across stereo channels with live waveform visualizations. The final answers are suppressed — only the thinking is shown and heard.
 
 ## Tech Stack
 
 - **Runtime:** Browser (ES modules)
 - **Build:** Vite dev server + production bundler
-- **LLM Inference:** OpenAI-compatible local providers (LM Studio, etc.) via `fetch()` + SSE
-- **TTS:** Pocket TTS (100M params, CPU-only) via local Python server. Streaming WAV audio over HTTP (`POST /v1/tts` with `{text, voice}`). Voice cloning from any WAV file via `get_state_for_audio_prompt()`. Sentence-level text input, ~200ms first-audio latency.
+- **LLM Inference:** OpenRouter cloud API (OpenAI-compatible) via `fetch()` + SSE; Bearer key from `.env` (`VITE_OPENROUTER_API_KEY`), model slug from `VITE_OPENROUTER_MODEL`. See ADR-006 (`docs/adr/006-openrouter-cloud-llm.md`).
+- **TTS:** Pocket TTS (100M params, CPU-only) via local Python server. Streaming WAV audio over HTTP (`POST /v1/tts` with `{text, voice}`); the client decodes incrementally — playback starts before the sentence finishes synthesizing. Voice cloning from any WAV file via `get_state_for_audio_prompt()` (requires HuggingFace auth; without a token the server loads a no-cloning model variant). Sentence-level text input, ~200ms first-audio latency (measured 206–218ms TTFB, see `docs/tts-benchmark-2026-11-23.md`). Startup warmup synthesis logs the machine's realtime factor.
 - **TTS Protocol:** HTTP request/response (`POST /v1/tts` → streaming WAV). Replay uses the same endpoint with `playStream(streamFn)` audio mode instead of `openStream()`.
 - **TTS Reference:** See ADR-005 (`docs/adr/005-pocket-tts-switch.md`). Upstream: [Pocket TTS](https://github.com/kyutai-labs/pocket-tts), [CALM paper](https://arxiv.org/abs/2509.06926).
 - **Audio:** Web Audio API (AudioContext, GainNode, StereoPannerNode, AnalyserNode)
@@ -95,8 +95,8 @@ Orchestrator:
   4. Fire all LLM streams concurrently via `LLMProvider.streamReasoning()`
      • Tokens → ChannelPipeline.feedToken() → Column.appendToken() all 3 models
      • Only the active pipeline feeds TTS: TextChunker splits reasoning on
-       punctuation (`.!?;`, configurable), max words (configurable, default 100), or silence
-       timeout (configurable, default 4000ms, min 20 words). Each sentence sent via HTTP POST.
+       punctuation (`.!?;`, configurable), max words (configurable, default 20), or silence
+       timeout (configurable, default 4000ms, min 10 words). Each sentence sent via HTTP POST.
      • Each sentence → PocketTtsBackend.startStream() → POST /v1/tts →
        server generates streaming WAV audio
      • PCM frames stream back over HTTP → AudioGraph channel → waveform animates
@@ -146,7 +146,7 @@ new ChannelPipeline({ model, ttsConfig, column, ttsEngine, llmProvider, audioGra
 
 **Text feeding (live path):** Tokens route through TextChunker (when enabled), which flushes on
 punctuation (`.` `!` `?` `;` — configurable, no comma by default), max words (configurable,
-default 100), or silence timeout (configurable, default 4000ms, min 20 words). Each flushed
+default 20), or silence timeout (configurable, default 4000ms, min 10 words). Each flushed
 chunk enters the `#sentenceQueue` and is sent as a separate HTTP POST via
 `PocketTtsBackend.startStream()`. Sentences play sequentially — next starts only after
 current `onDone`. A single audio stream (`openStream()`) is reused across all sentences.
@@ -162,7 +162,9 @@ Abstract interface for LLM streaming. Concrete implementations hide fetch → SS
 
 ```js
 // OpenAICompatibleProvider is the default implementation
-const provider = new OpenAICompatibleProvider({ url, model, reasoningFormat });
+const provider = new OpenAICompatibleProvider({ url, model, reasoningFormat, apiKey, maxTokens });
+// apiKey → Authorization: Bearer <key>; maxTokens → max_tokens in request body
+// (Orchestrator passes config.models[].apiKey and config.tts.maxTokens)
 await provider.streamReasoning(
   question,
   systemPrompt,
@@ -181,7 +183,7 @@ await provider.streamReasoning(
 - `"tagged"`: extracts reasoning from `<think>...</think>` tags inside `delta.content`
 - `"none"`: treats all `delta.content` as reasoning
 
-`llm/llm-stream.js` preserves a backward-compatible `streamReasoning()` wrapper.
+`llm/llm-stream.js` preserves a backward-compatible `streamReasoning()` wrapper that forwards `apiKey` and `maxTokens` from its options object. `llm/health-check.js` now takes `(baseUrl, apiKey, timeoutMs)` and sends the same Bearer header on `GET /models`.
 
 ### PocketTtsBackend (`tts/pocket-tts-backend.js`)
 
@@ -305,7 +307,7 @@ Idle ──► Loading ────────┤
 |---|---|---|
 | `index.html` | Root HTML + loading spinner element | Shallow (markup) |
 | `index.js` | Bootstrap: wire UI → Orchestrator → AudioGraph, loading spinner | Shallow (wiring) |
-| `config.js` | Static config: models, prompts, TTS params | Shallow (data) |
+| `config.js` | Config: OpenRouter URLs/keys from `.env`, persona prompts, TTS params | Shallow (data) |
 | `ui/prompt-selector.js` | Curated cards + free-text + Ask button, keyboard a11y | Deep |
 | `ui/prompt-selector.css` | Prompt cards + input styling | Shallow (style) |
 
@@ -340,14 +342,14 @@ Idle ──► Loading ────────┤
 | `vite.config.js` | Vite dev/build config | Shallow (config) |
 | `vite-env.d.ts` | Vite/CSS module type declarations | Shallow (types) |
 | `.gitignore` | Ignored files (node_modules, .env, scratch) | Shallow (config) |
-| `.env` | Legacy CLI script vars (not read by browser app) | Shallow (config) |
-| `test/` | Node test runner suites (90 tests, 14 suites) | Shallow (test) |
+| `.env` | `VITE_OPENROUTER_API_KEY` / `VITE_OPENROUTER_MODEL` for the browser app; legacy CLI vars (`BASE_URL`, `CHAT_COMPLETION_ENDPOINT`, `MODEL`) coexist | Shallow (config) |
+| `test/` | Node test runner suites (102 tests, 15 suites) | Shallow (test) |
 | `ui/debug-overlay.js` | Togglable pipeline diagnostics panel | Deep |
 | `ui/debug-overlay.css` | Debug overlay styling | Shallow (style) |
 
 ## Legacy Scripts
 
-`getReasoningContent.js` and `saveReasoning.js` are standalone Node.js utilities for fetching and saving reasoning content to disk. They are NOT part of the browser application flow. They reuse `llm/llm-stream.js` for streaming and read config from `.env` (not `config.js`). `normalizeModelName.js` is a shared helper used by the legacy scripts to slugify model names for directory paths.
+`getReasoningContent.js` and `saveReasoning.js` are standalone Node.js utilities for fetching and saving reasoning content to disk. They are NOT part of the browser application flow. They reuse `llm/llm-stream.js` for streaming and read `BASE_URL` / `CHAT_COMPLETION_ENDPOINT` / `MODEL` from `.env` via `dotenv`; the browser app instead reads `VITE_OPENROUTER_*` from `.env` at build time via `config.js`. Known gap: the legacy scripts do not forward `apiKey` to `streamReasoning()`, so they cannot authenticate against OpenRouter without a code change. `normalizeModelName.js` is a shared helper used by the legacy scripts to slugify model names for directory paths.
 
 ## Testing
 
@@ -363,11 +365,11 @@ npm test
 |---|---|---|
 | `health-check.test.js` | 4 | URL construction with/without trailing slashes, fetch errors |
 | `llm-stream.test.js` | 4 | Endpoint construction with/without trailing slashes |
-| `openai-compatible-provider.test.js` | 9 | Separate/tagged/none reasoning formats, URL construction, retry, abort |
-| `orchestrator.test.js` | 3 | stop() → Idle transition, no-save after stop, monologue sequencing |
+| `openai-compatible-provider.test.js` | 12 | Separate/tagged/none reasoning formats, URL construction, Bearer header when apiKey set (and omitted otherwise), `max_tokens` body field, retry, abort |
+| `orchestrator.test.js` | 11 | stop() → Idle transition, no-save after stop, monologue sequencing, mute/solo (8) |
 | `channel-pipeline.test.js` | 17 | Empty LLM stream, sentence streaming, sequential playback, token cap, content boundary, softStop isolation, reconnect recovery, resume, replay guard |
 | `audio-graph-stream.test.js` | 19 | playStream PCM playback/scheduling/ducking/stop (7); openStream feed/end/stop/ducking/pre-buffer (12) |
-| `pocket-tts-backend.test.js` | 16 | load() health check (4); startStream HTTP POST/chunk delivery/PCM decode (6); stop() abort (3); destroy() cleanup (2); concurrent calls (1) |
+| `pocket-tts-backend.test.js` | 17 | load() health check (4); startStream HTTP POST/chunk delivery/PCM decode (7, incl. incremental delivery before stream close); stop() abort (3); destroy() cleanup (2); concurrent calls (1) |
 | `text-chunker.test.js` | 18 | Punctuation (incl. comma), max-words, timeout, min-words guard, disabled punctuation, manual flush, reset, multiple sentences |
 
 ### Testable modules (for new tests)
@@ -392,6 +394,13 @@ npm test
 | Config validation | Add schema check before bootstrap | `config.js`, `index.js` |
 | Per-model system prompt | Add `systemPrompt` field to `ModelConfig`; Orchestrator passes per-model prompt to pipeline | `config.js`, `session/orchestrator.js`, `session/channel-pipeline.js` |
 
+## LLM Stack References
+
+| Resource | Link |
+|---|---|
+| Cloud migration decision | `docs/adr/006-openrouter-cloud-llm.md` |
+| OpenRouter API reference | <https://openrouter.ai/docs/api-reference> |
+
 ## TTS Stack References
 
 | Resource | Link |
@@ -401,4 +410,5 @@ npm test
 | Pocket TTS demo | <https://kyutai.org/pocket-tts> |
 | Pocket TTS technical report | <https://kyutai.org/pocket-tts-technical-report> |
 | Pocket TTS switch ADR | `docs/adr/005-pocket-tts-switch.md` |
+| On-device benchmark (2026-11-23) | `docs/tts-benchmark-2026-11-23.md` |
 | TTS technology evaluation | `docs/tts-technology-evaluation.md` |

@@ -329,6 +329,56 @@ describe("PocketTtsBackend", () => {
       assert.ok(errorMsg.length > 0, "should have error message");
     });
 
+    it("delivers PCM incrementally before the stream closes (true streaming)", async () => {
+      const backend = new PocketTtsBackend();
+      await backend.load();
+
+      // Split WAV: header + first half of samples now, second half after a delay
+      const sourceSamples = new Float32Array(100);
+      for (let i = 0; i < sourceSamples.length; i++) sourceSamples[i] = i / 100;
+      const wav = createWavBuffer(sourceSamples);
+      const dataStart = 44;
+      const half = dataStart + Math.floor((wav.length - dataStart) / 2);
+      const firstPart = wav.slice(0, half);
+      const secondPart = wav.slice(half);
+
+      let streamClosed = false;
+      globalThis.fetch = /** @type {typeof fetch} */ (async () => {
+        const stream = new ReadableStream({
+          async start(controller) {
+            controller.enqueue(firstPart);
+            // Second half arrives only after a delay — a truly streaming
+            // client must already have emitted the first samples by then.
+            await new Promise((r) => setTimeout(r, 60));
+            controller.enqueue(secondPart);
+            controller.close();
+            streamClosed = true;
+          },
+        });
+        return new Response(stream, { status: 200, headers: { "Content-Type": "audio/wav" } });
+      });
+
+      /** @type {boolean[]} */
+      const deliveredBeforeClose = [];
+      /** @type {Array<Float32Array>} */
+      const chunks = [];
+
+      backend.startStream("test", "default", (pcm) => {
+        chunks.push(new Float32Array(pcm));
+        deliveredBeforeClose.push(streamClosed === false);
+      }, { onDone: () => {} });
+
+      await new Promise((r) => setTimeout(r, 150));
+
+      assert.ok(chunks.length >= 1, "should have received PCM chunks");
+      assert.ok(
+        deliveredBeforeClose.some(Boolean),
+        "at least one chunk must arrive before the stream closes"
+      );
+      const totalSamples = chunks.reduce((s, c) => s + c.length, 0);
+      assert.strictEqual(totalSamples, sourceSamples.length);
+    });
+
     it("handles 16-bit PCM WAV by converting to float32", async () => {
       const backend = new PocketTtsBackend();
       await backend.load();
