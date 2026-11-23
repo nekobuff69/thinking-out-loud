@@ -3,6 +3,8 @@
  * @property {(token: string) => void} [onReasoningToken]
  * @property {() => void} [onContentStart]
  * @property {() => void} [onDone]
+ * @property {(finishReason: string) => void} [onTruncated] - Fired once when
+ *   generation stops with a length-based finish_reason.
  */
 
 /**

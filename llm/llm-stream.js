@@ -35,7 +35,9 @@ export async function streamReasoning(url, model, systemPrompt, question, callba
     model,
     reasoningFormat: "separate",
     apiKey: typeof opts.apiKey === "string" ? opts.apiKey : "",
-    maxTokens: typeof opts.maxTokens === "number" ? opts.maxTokens : undefined,
+    llmMaxTokens: typeof opts.llmMaxTokens === "number"
+      ? opts.llmMaxTokens
+      : typeof opts.maxTokens === "number" ? opts.maxTokens : undefined,
   });
   // Remaining options are not passed through to the provider (unused in the app).
   // If needed in the future, extend OpenAICompatibleProvider constructor.

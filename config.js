@@ -16,7 +16,9 @@
 /**
  * @typedef {Object} TTSConfig
  * @property {string} serverUrl - HTTP URL for Pocket TTS server
- * @property {number} maxTokens - Soft token cap for reasoning text
+ * @property {number} llmMaxTokens - Hard max_tokens sent to the LLM API. Bounds
+ *   generated reasoning; raise it if thoughts get cut off mid-sentence. All
+ *   reasoning the LLM returns is converted to speech (no separate TTS word cap).
  * @property {number} sentenceTimeoutTokens - Force-flush threshold per sentence (default: 60)
  * @property {boolean} useTextChunker - Enable optional TextChunker for prosody tuning (default: false)
  * @property {number} [chunkerMaxWords] - Max words before forcing a TextChunker flush (default: 15)
@@ -99,7 +101,7 @@ export const config = {
 
 	tts: {
 		serverUrl: "http://localhost:8080", // Pocket TTS server
-		maxTokens: 200, // soft token cap per LLM stream
+		llmMaxTokens: 1600, // LLM max_tokens; ~1243 used for a full thought on gpt-oss-20b, 200 truncates mid-sentence
 		sentenceTimeoutTokens: 200, // force-flush threshold per sentence
 		useTextChunker: true, // enable chunker for prosody tuning
 		chunkerMaxWords: 20, // words in buffer before force-flush (small = shorter TTS requests = lower first-audio latency on CPU)

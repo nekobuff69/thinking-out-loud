@@ -325,7 +325,7 @@ export class Orchestrator {
 						model.reasoningFormat ?? "separate"
 					),
 					apiKey: model.apiKey ?? "",
-					maxTokens: this.#ttsConfig.maxTokens,
+					llmMaxTokens: this.#ttsConfig.llmMaxTokens,
 				});
 				this.#providerCache.set(cacheKey, llmProvider);
 			}

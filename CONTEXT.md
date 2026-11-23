@@ -162,15 +162,16 @@ Abstract interface for LLM streaming. Concrete implementations hide fetch → SS
 
 ```js
 // OpenAICompatibleProvider is the default implementation
-const provider = new OpenAICompatibleProvider({ url, model, reasoningFormat, apiKey, maxTokens });
-// apiKey → Authorization: Bearer <key>; maxTokens → max_tokens in request body
-// (Orchestrator passes config.models[].apiKey and config.tts.maxTokens)
+const provider = new OpenAICompatibleProvider({ url, model, reasoningFormat, apiKey, llmMaxTokens });
+// apiKey → Authorization: Bearer <key>; llmMaxTokens → max_tokens in request body
+// (Orchestrator passes config.models[].apiKey and config.tts.llmMaxTokens, default 1600)
 await provider.streamReasoning(
   question,
   systemPrompt,
   {
     onReasoningToken: (token) => {},
     onContentStart: () => {},       // Content boundary reached
+    onTruncated: (finishReason) => {}, // finish_reason="length" — output cut off mid-thought
     onDone: () => {},
   },
   signal
@@ -183,7 +184,9 @@ await provider.streamReasoning(
 - `"tagged"`: extracts reasoning from `<think>...</think>` tags inside `delta.content`
 - `"none"`: treats all `delta.content` as reasoning
 
-`llm/llm-stream.js` preserves a backward-compatible `streamReasoning()` wrapper that forwards `apiKey` and `maxTokens` from its options object. `llm/health-check.js` now takes `(baseUrl, apiKey, timeoutMs)` and sends the same Bearer header on `GET /models`.
+`llm/llm-stream.js` preserves a backward-compatible `streamReasoning()` wrapper that forwards `apiKey` and `llmMaxTokens` (or legacy `maxTokens`) from its options object. `llm/health-check.js` now takes `(baseUrl, apiKey, timeoutMs)` and sends the same Bearer header on `GET /models`.
+
+**Token cap and truncation:** `llmMaxTokens` (default 1600) is the only generation limit — it is sent to the API as `max_tokens`. There is no separate TTS word cap: every reasoning token the model returns is converted to speech. When the model stops on `finish_reason: "length"`, the provider fires `onTruncated` once; the pipeline emits `pipeline-truncated` on the event bus and calls `column.setTruncated()`, which appends a non-destructive `[truncated: length — raise llmMaxTokens]` marker to the column without altering `reasoningText` (so storage and replay stay clean). The debug overlay logs the event as an error line. Measured on `gpt-oss-20b`: 200 tokens cut a thought mid-sentence, ~1243 tokens complete one.
 
 ### PocketTtsBackend (`tts/pocket-tts-backend.js`)
 
@@ -365,12 +368,15 @@ npm test
 |---|---|---|
 | `health-check.test.js` | 4 | URL construction with/without trailing slashes, fetch errors |
 | `llm-stream.test.js` | 4 | Endpoint construction with/without trailing slashes |
-| `openai-compatible-provider.test.js` | 12 | Separate/tagged/none reasoning formats, URL construction, Bearer header when apiKey set (and omitted otherwise), `max_tokens` body field, retry, abort |
-| `orchestrator.test.js` | 11 | stop() → Idle transition, no-save after stop, monologue sequencing, mute/solo (8) |
-| `channel-pipeline.test.js` | 17 | Empty LLM stream, sentence streaming, sequential playback, token cap, content boundary, softStop isolation, reconnect recovery, resume, replay guard |
+| `openai-compatible-provider.test.js` | 14 | Separate/tagged/none reasoning formats, URL construction, Bearer header, `max_tokens` from `llmMaxTokens`, `onTruncated` on finish_reason=length / absent on stop, retry, abort |
+| `orchestrator.test.js` | 14 | stop() → Idle, no-save after stop, monologue sequencing, mute/solo, save-once, replay-saves-once, replay sequential synthesis (no concurrent TTS) |
+| `channel-pipeline.test.js` | 20 | Empty LLM stream, sentence streaming, sequential playback, no-word-cap full feed, content boundary, softStop isolation, reconnect recovery, resume, replay guard/defer-idle |
+| `channel-pipeline-karaoke.test.js` | 5 | Karaoke progress tied to playback position, blend hand-off, no wall-clock drift |
 | `audio-graph-stream.test.js` | 19 | playStream PCM playback/scheduling/ducking/stop (7); openStream feed/end/stop/ducking/pre-buffer (12) |
+| `audio-graph-playback-position.test.js` | 4 | Playback-head sample accounting across scheduled segments and gaps |
 | `pocket-tts-backend.test.js` | 17 | load() health check (4); startStream HTTP POST/chunk delivery/PCM decode (7, incl. incremental delivery before stream close); stop() abort (3); destroy() cleanup (2); concurrent calls (1) |
 | `text-chunker.test.js` | 18 | Punctuation (incl. comma), max-words, timeout, min-words guard, disabled punctuation, manual flush, reset, multiple sentences |
+| `word-segmenter.test.js` | 12 | Latin/CJK word indexing, punctuation weighting, progress mapping |
 
 ### Testable modules (for new tests)
 

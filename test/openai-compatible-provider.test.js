@@ -307,6 +307,57 @@ describe("OpenAICompatibleProvider", () => {
     assert.strictEqual(body.model, "openai/gpt-oss-20b");
   });
 
+  it("reports truncation when finish_reason is length", async () => {
+    globalThis.fetch = /** @type {typeof fetch} */ (async () => {
+      return new Response(
+        sseStream(
+          'data: {"choices":[{"delta":{"reasoning":"partial thought "},"finish_reason":null}]}\n\n' +
+          'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n' +
+          "data: [DONE]\n\n"
+        ),
+        { status: 200 }
+      );
+    });
+
+    const provider = new OpenAICompatibleProvider({
+      url: "https://openrouter.ai/api/v1", model: "openai/gpt-oss-20b",
+    });
+
+    let truncatedCalled = false;
+    let doneCalled = false;
+    await provider.streamReasoning("q", "sys", {
+      onTruncated: () => { truncatedCalled = true; },
+      onDone: () => { doneCalled = true; },
+    });
+
+    assert.strictEqual(truncatedCalled, true, "onTruncated must fire on finish_reason=length");
+    assert.strictEqual(doneCalled, true, "onDone must still fire");
+  });
+
+  it("does not report truncation on a natural stop", async () => {
+    globalThis.fetch = /** @type {typeof fetch} */ (async () => {
+      return new Response(
+        sseStream(
+          'data: {"choices":[{"delta":{"reasoning":"complete thought"},"finish_reason":"stop"}]}\n\n' +
+          "data: [DONE]\n\n"
+        ),
+        { status: 200 }
+      );
+    });
+
+    const provider = new OpenAICompatibleProvider({
+      url: "https://openrouter.ai/api/v1", model: "openai/gpt-oss-20b",
+    });
+
+    let truncatedCalled = false;
+    await provider.streamReasoning("q", "sys", {
+      onTruncated: () => { truncatedCalled = true; },
+      onDone: () => {},
+    });
+
+    assert.strictEqual(truncatedCalled, false, "onTruncated must not fire on natural stop");
+  });
+
   it("retries once on non-abort failure", async () => {
     let attempts = 0;
     globalThis.fetch = /** @type {typeof fetch} */ (async () => {

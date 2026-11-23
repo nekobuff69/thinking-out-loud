@@ -274,18 +274,19 @@ describe("ChannelPipeline", () => {
     assert.ok(ttsTexts.some(t => t.includes("complex")), "should contain reasoning tokens");
   });
 
-  it("token cap stops feeding new text to TextChunker", async () => {
-    let feedCount = 0;
+  it("feeds every reasoning token to TTS with no word cap", async () => {
+    /** @type {string[]} */
+    const voicedTexts = [];
 
-    // Create a custom TextChunker that counts feeds
     const mockTtsEngine = {
       load: async () => {},
       startStream: (
-        /** @type {string} */ _text,
+        /** @type {string} */ text,
         /** @type {string} */ _voice,
         /** @type {(pcm: Float32Array, sampleRate: number) => void} */ _onChunk,
         /** @type {{ onDone?: () => void }} */ callbacks
       ) => {
+        voicedTexts.push(text);
         if (callbacks?.onDone) {
           queueMicrotask(() => callbacks.onDone?.());
         }
@@ -310,8 +311,20 @@ describe("ChannelPipeline", () => {
 
     const { pipeline } = makePipeline({ ttsEngine: mockTtsEngine, llmProvider: mockLlmProvider });
     await pipeline.startStream("system prompt", "question");
+    // Sentences are voiced sequentially via a microtask-driven queue; let it drain.
+    await new Promise((r) => setTimeout(r, 50));
 
-    assert.ok(pipeline.isCapped, "pipeline should report isCapped when token limit exceeded");
+    // 250 words exceeds the old 200 cap. Nothing may be dropped: full text is
+    // stored and reaches TTS (via chunker flushes).
+    assert.strictEqual(pipeline.isCapped, false, "no TTS word cap should ever engage");
+    assert.ok(
+      pipeline.reasoningText.split(/\s+/).filter(Boolean).length >= 250,
+      "all reasoning words must be retained"
+    );
+    assert.ok(
+      voicedTexts.join(" ").includes("word249"),
+      "the last reasoning words must reach TTS"
+    );
   });
 
   it("content boundary flushes pending TextChunker text", async () => {

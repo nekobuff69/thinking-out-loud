@@ -123,7 +123,8 @@ export class DebugOverlay {
       bus.on("tts-done", (data) => this.#onTtsDone(data)),
       bus.on("tts-text-sent", (data) => this.#onTtsTextSent(data)),
       bus.on("pipeline-progress", (data) => this.#onProgress(data)),
-      bus.on("pipeline-error", (data) => this.#onError(data))
+      bus.on("pipeline-error", (data) => this.#onError(data)),
+      bus.on("pipeline-truncated", (data) => this.#onTruncated(data))
     );
   }
 
@@ -232,12 +233,32 @@ export class DebugOverlay {
    * @param {{ modelName: string, message: string, timestamp: number }} data
    */
   #onError(data) {
-    const card = this.#ensureCard(data.modelName);
+    this.#appendErrorLine(data.modelName, data.timestamp, data.message);
+  }
+
+  /**
+   * @param {{ modelName: string, finishReason: string, timestamp: number }} data
+   */
+  #onTruncated(data) {
+    this.#appendErrorLine(
+      data.modelName,
+      data.timestamp,
+      `TRUNCATED (${data.finishReason}) — raise config.tts.llmMaxTokens`
+    );
+  }
+
+  /**
+   * @param {string} modelName
+   * @param {number} timestamp
+   * @param {string} message
+   */
+  #appendErrorLine(modelName, timestamp, message) {
+    const card = this.#ensureCard(modelName);
     const el = card.querySelector(".debug-errors");
     if (el) {
       const line = document.createElement("div");
       line.className = "debug-error-line";
-      line.textContent = `[${new Date(data.timestamp).toLocaleTimeString()}] ${data.message}`;
+      line.textContent = `[${new Date(timestamp).toLocaleTimeString()}] ${message}`;
       el.appendChild(line);
       // Keep last 5 errors
       while (el.children.length > 5 && el.firstChild) {

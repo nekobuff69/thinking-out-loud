@@ -63,6 +63,13 @@
   background: #0a0505;
 }
 
+/* Truncation notice — appended after reasoning, not destructive */
+.truncation-notice {
+  color: #ffb454;
+  font-style: italic;
+  opacity: 0.9;
+}
+
 
 .mute-btn,
 .solo-btn {

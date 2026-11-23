@@ -5,6 +5,8 @@ import { LLMProvider } from "./llm-provider.js";
  * @property {(token: string) => void} [onReasoningToken]
  * @property {() => void} [onContentStart]
  * @property {() => void} [onDone]
+ * @property {(finishReason: string) => void} [onTruncated] - Fired once when the
+ *   model stops with finish_reason "length" (output cut off mid-thought).
  */
 
 /**
@@ -123,7 +125,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
   /** @type {string} */
   #apiKey;
   /** @type {number | undefined} */
-  #maxTokens;
+  #llmMaxTokens;
 
   /**
    * @param {Object} opts
@@ -131,15 +133,16 @@ export class OpenAICompatibleProvider extends LLMProvider {
    * @param {string} opts.model - Model identifier
    * @param {"separate" | "tagged" | "none"} [opts.reasoningFormat]
    * @param {string} [opts.apiKey] - Bearer token (hosted providers like OpenRouter)
-   * @param {number} [opts.maxTokens] - Hard generation cap sent in the request body
+   * @param {number} [opts.llmMaxTokens] - LLM API max_tokens (hard generation cap)
+   * @param {number} [opts.maxTokens] - Deprecated alias for llmMaxTokens
    */
-  constructor({ url, model, reasoningFormat = "separate", apiKey = "", maxTokens }) {
+  constructor({ url, model, reasoningFormat = "separate", apiKey = "", llmMaxTokens, maxTokens }) {
     super();
     this.#url = url;
     this.#model = model;
     this.#reasoningFormat = reasoningFormat;
     this.#apiKey = apiKey;
-    this.#maxTokens = maxTokens;
+    this.#llmMaxTokens = llmMaxTokens ?? maxTokens;
   }
 
   /**
@@ -159,6 +162,20 @@ export class OpenAICompatibleProvider extends LLMProvider {
       ? normalized
       : `${normalized}/chat/completions`;
 
+    // Truncation state lives across retries so the notice is emitted once.
+    const state = { contentStarted: false, truncated: false, truncatedReported: false };
+    const reportTruncationIfNeeded = () => {
+      if (state.truncated && !state.truncatedReported) {
+        state.truncatedReported = true;
+        callbacks.onTruncated?.("length");
+      }
+    };
+    /** onDone fired on every terminal path — wrap so truncation is reported first. */
+    const done = () => {
+      reportTruncationIfNeeded();
+      callbacks.onDone?.();
+    };
+
     const attempt = async (/** @type {AbortSignal | undefined} */ abortSignal) => {
       /** @type {Record<string, string>} */
       const headers = { "Content-Type": "application/json" };
@@ -177,7 +194,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
             { role: "user", content: question },
           ],
           stream: true,
-          ...(this.#maxTokens !== undefined ? { max_tokens: this.#maxTokens } : {}),
+          ...(this.#llmMaxTokens !== undefined ? { max_tokens: this.#llmMaxTokens } : {}),
         }),
       });
 
@@ -192,8 +209,13 @@ export class OpenAICompatibleProvider extends LLMProvider {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      const state = { contentStarted: false };
+      // state is shared with the outer scope (across retries); reset the
+      // per-attempt content flag but keep the truncation report guard.
+      state.contentStarted = false;
       const taggedParser = new TaggedParser();
+      // #processSsePart fires onDone on [DONE]; route it through `done` so the
+      // truncation notice is emitted before completion on every terminal path.
+      const sseCallbacks = { ...callbacks, onDone: done };
 
       try {
         while (true) {
@@ -205,7 +227,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
           buffer = parts.pop() || "";
 
           for (const part of parts) {
-            if (this.#processSsePart(part, callbacks, state, taggedParser)) {
+            if (this.#processSsePart(part, sseCallbacks, state, taggedParser)) {
               reader.releaseLock();
               return;
             }
@@ -213,7 +235,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
         }
 
         if (buffer.trim()) {
-          if (this.#processSsePart(buffer, callbacks, state, taggedParser)) {
+          if (this.#processSsePart(buffer, sseCallbacks, state, taggedParser)) {
             reader.releaseLock();
             return;
           }
@@ -231,12 +253,12 @@ export class OpenAICompatibleProvider extends LLMProvider {
           );
         }
 
-        callbacks.onDone?.();
+        done();
       } catch (err) {
         if (err instanceof Error && err.name !== "AbortError") {
           console.error("LLM stream error:", err);
         }
-        callbacks.onDone?.();
+        done();
         throw err;
       } finally {
         reader.releaseLock();
@@ -254,7 +276,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
   /**
    * @param {string} part
    * @param {StreamCallbacks} callbacks
-   * @param {{ contentStarted: boolean }} state
+   * @param {{ contentStarted: boolean, truncated: boolean, truncatedReported: boolean }} state
    * @param {TaggedParser} taggedParser
    * @returns {boolean}
    */
@@ -277,7 +299,16 @@ export class OpenAICompatibleProvider extends LLMProvider {
         continue;
       }
 
-      const delta = parsed.choices?.[0]?.delta;
+      const choice = parsed.choices?.[0];
+      if (!choice) continue;
+
+      // Record length-based truncation. OpenRouter sends finish_reason on the
+      // terminal choice chunk, before the [DONE] sentinel.
+      if (choice.finish_reason === "length") {
+        state.truncated = true;
+      }
+
+      const delta = choice.delta;
       if (!delta) continue;
 
       switch (this.#reasoningFormat) {

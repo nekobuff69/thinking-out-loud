@@ -199,6 +199,17 @@ export class ChannelPipeline {
 					onContentStart: () => {
 						this.setContentHit();
 					},
+					onTruncated: (finishReason) => {
+						// Model stopped on its token limit, mid-thought. Surface a
+						// non-destructive notice without touching reasoningText
+						// (which feeds storage and future replay).
+						this.#column.setTruncated?.(finishReason);
+						this.#eventBus?.emit("pipeline-truncated", {
+							modelName: this.#model.name,
+							finishReason,
+							timestamp: Date.now(),
+						});
+					},
 					onDone: () => {
 						this.#streamActive = false;
 						// Flush remaining text and finalize TTS
@@ -232,17 +243,10 @@ export class ChannelPipeline {
 		this.#reasoningText += token;
 
 		if (!this.#contentHit && !this.#isCapped && !this.#paused) {
+			// No TTS word cap — feed every token to speech. Generation itself is
+			// bounded upstream by the LLM's llmMaxTokens, not by a word budget here.
 			if (this.#textChunker) {
-				// Token cap check
-				this.#wordCount = this.#reasoningText
-					.split(/\s+/)
-					.filter(Boolean).length;
-				if (this.#wordCount >= this.#ttsConfig.maxTokens) {
-					this.#isCapped = true;
-					this.#flushAndClose();
-				} else {
-					this.#textChunker.feed(token);
-				}
+				this.#textChunker.feed(token);
 			} else {
 				this.#feedTts(token);
 			}
@@ -256,17 +260,8 @@ export class ChannelPipeline {
 	 * @param {string} text
 	 */
 	#feedTts(text) {
-		// Update word count for token cap
-		this.#wordCount = this.#reasoningText.split(/\s+/).filter(Boolean).length;
-
-		// Token cap check
-		if (this.#wordCount >= this.#ttsConfig.maxTokens) {
-			this.#isCapped = true;
-			this.#flushAndClose();
-			return;
-		}
-
-		// Ensure stream is opened
+		// No TTS word cap: every reasoning token the LLM emits is converted to
+		// speech. The only generation limit is the LLM's own llmMaxTokens.
 		this.#ensureTtsStream();
 
 		// Accumulate in live buffer (not #unsentBuffer, which is for replay)
